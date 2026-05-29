@@ -39,7 +39,7 @@ services:
       DB_NAME: netnut
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JOB_MANAGER_PORT: 3001
+      PORT: 3001
     ports:
       - '3001:3001'
     depends_on:
@@ -83,9 +83,9 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
-      API_PORT: 3000
+      PORT: 3000
       JOB_MANAGER_HOST: job-manager
-      JOB_MANAGER_PORT: 3001
+      PORT: 3001
     ports:
       - '3000:3000'
     depends_on:

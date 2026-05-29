@@ -1,7 +1,7 @@
-import { Module, ValidationPipe } from '@nestjs/common';
-import { APP_PIPE } from '@nestjs/core';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { validationPipeProvider } from '@netnut/shared';
 import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
 import { HealthController } from './health.controller';
@@ -20,26 +20,13 @@ import { HealthController } from './health.controller';
           transport: Transport.TCP,
           options: {
             host: config.get('JOB_MANAGER_HOST', 'localhost'),
-            port: config.get<number>('JOB_MANAGER_PORT', 3001),
+            port: config.get('PORT', 3001),
           },
         }),
       },
     ]),
   ],
   controllers: [ApiController, HealthController],
-  providers: [
-    ApiService,
-    {
-      // Global validation pipe registered through DI (recommended over
-      // app.useGlobalPipes in main.ts — can inject deps and is part of the
-      // module graph for testing).
-      provide: APP_PIPE,
-      useValue: new ValidationPipe({
-        transform: true,
-        whitelist: true,
-        forbidNonWhitelisted: true,
-      }),
-    },
-  ],
+  providers: [ApiService, validationPipeProvider],
 })
 export class ApiModule {}

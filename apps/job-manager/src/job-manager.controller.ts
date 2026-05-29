@@ -1,4 +1,4 @@
-import { Controller, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { CreateScrapeJobDto, JobManagerPattern } from '@netnut/shared';
 import { JobManagerService } from './job-manager.service';
@@ -8,7 +8,6 @@ export class JobManagerController {
   constructor(private readonly service: JobManagerService) {}
 
   @MessagePattern(JobManagerPattern.CREATE_JOB)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   createJob(@Payload() dto: CreateScrapeJobDto) {
     return this.service.createJob(dto);
   }

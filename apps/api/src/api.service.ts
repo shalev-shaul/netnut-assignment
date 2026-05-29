@@ -9,8 +9,7 @@ const RPC_TIMEOUT_MS = 5000;
 @Injectable()
 export class ApiService {
   constructor(
-    @Inject('JOB_MANAGER')
-    private readonly jobManagerClient: ClientProxy,
+    @Inject('JOB_MANAGER') private readonly jobManagerClient: ClientProxy,
   ) {}
 
   async createJob(dto: CreateScrapeJobDto) {

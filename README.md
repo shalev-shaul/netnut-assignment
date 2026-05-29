@@ -107,14 +107,14 @@ docker-compose up postgres redis -d
 
 `apps/api/.env`
 ```
-API_PORT=3000
+PORT=3000
 JOB_MANAGER_HOST=localhost
-JOB_MANAGER_PORT=3001
+PORT=3001
 ```
 
 `apps/job-manager/.env`
 ```
-JOB_MANAGER_PORT=3001
+PORT=3001
 DB_HOST=localhost
 DB_PORT=5433
 DB_USER=postgres

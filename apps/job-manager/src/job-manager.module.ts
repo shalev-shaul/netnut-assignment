@@ -1,8 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { Job } from '@netnut/shared';
+import { Job, TypeOrmConnectionModule, validationPipeProvider } from '@netnut/shared';
 import { JobManagerController } from './job-manager.controller';
 import { JobManagerService } from './job-manager.service';
 
@@ -12,20 +11,7 @@ import { JobManagerService } from './job-manager.service';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        username: config.get('DB_USER', 'postgres'),
-        password: config.get('DB_PASS', 'postgres'),
-        database: config.get('DB_NAME', 'netnut'),
-        entities: [Job],
-        synchronize: true,
-      }),
-    }),
-    TypeOrmModule.forFeature([Job]),
+    TypeOrmConnectionModule.forRoot([Job]),
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -38,6 +24,6 @@ import { JobManagerService } from './job-manager.service';
     BullModule.registerQueue({ name: 'scrape' }),
   ],
   controllers: [JobManagerController],
-  providers: [JobManagerService],
+  providers: [JobManagerService, validationPipeProvider],
 })
 export class JobManagerModule {}
