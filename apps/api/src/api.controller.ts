@@ -7,8 +7,8 @@ export class ApiController {
   constructor(private readonly apiService: ApiService) {}
 
   @Post()
-  createJob(@Body() dto: CreateScrapeJobDto) {
-    return this.apiService.createJob(dto);
+  createJob(@Body() createJob: CreateScrapeJobDto) {
+    return this.apiService.createJob(createJob);
   }
 
   @Get(':id')
