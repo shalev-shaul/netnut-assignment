@@ -7,3 +7,4 @@ export * from './database/typeorm-connection.module';
 export * from './enums/job-manager-pattern.enum';
 export * from './providers/validation-pipe.provider';
 export * from './utils/url-safety';
+export * from './errors/errors';

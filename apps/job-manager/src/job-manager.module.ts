@@ -17,7 +17,7 @@ import { JobManagerService } from './job-manager.service';
       useFactory: (config: ConfigService) => ({
         redis: {
           host: config.get('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
+          port: config.get('REDIS_PORT', 6379),
         },
       }),
     }),

@@ -20,7 +20,7 @@ import { HealthController } from './health.controller';
           transport: Transport.TCP,
           options: {
             host: config.get('JOB_MANAGER_HOST', 'localhost'),
-            port: config.get('PORT', 3001),
+            port: config.get('JOB_MANAGER_PORT', 3001),
           },
         }),
       },

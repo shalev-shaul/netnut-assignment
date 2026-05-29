@@ -1,7 +1,7 @@
 import {Inject,Injectable,NotFoundException,ServiceUnavailableException} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
-import {CreateScrapeJobDto,JobManagerPattern,Job,JobResponse,toJobResponse} from '@netnut/shared';
+import {CreateScrapeJobDto,JobManagerPattern,Job,JobResponse,toJobResponse,NotFoundError} from '@netnut/shared';
 
 // Fail fast if the Job Manager is unreachable instead of hanging the request.
 const RPC_TIMEOUT_MS = 5000;
@@ -18,8 +18,7 @@ export class ApiService {
   }
 
   async getJob(id: string): Promise<JobResponse> {
-    const job = await this.send<Job | null>(JobManagerPattern.GET_JOB, id);
-    if (!job) throw new NotFoundException(`Job ${id} not found`);
+    const job = await this.send<Job>(JobManagerPattern.GET_JOB, id);
     return toJobResponse(job);
   }
 
@@ -27,17 +26,28 @@ export class ApiService {
     return firstValueFrom(
       this.jobManagerClient.send<T>(pattern, payload).pipe(
         timeout(RPC_TIMEOUT_MS),
-        catchError((err) =>
-          err instanceof TimeoutError
-            ? throwError(
-                () =>
-                  new ServiceUnavailableException(
-                    'Job Manager did not respond in time',
-                  ),
-              )
-            : throwError(() => err),
-        ),
+        catchError((err) => throwError(() => this.toHttpError(err))),
       ),
+    );
+  }
+
+  /** Translate transport/domain errors into HTTP exceptions at the edge. */
+  private toHttpError(err: unknown): unknown {
+    if (err instanceof TimeoutError) {
+      return new ServiceUnavailableException('Job Manager did not respond in time');
+    }
+    if (this.isNotFound(err)) {
+      return new NotFoundException((err as Error).message);
+    }
+    return err;
+  }
+
+  private isNotFound(err: unknown): boolean {
+    // `instanceof` covers in-process throws; the `code` check covers errors
+    // serialized across the TCP boundary, where the class prototype is lost.
+    return (
+      err instanceof NotFoundError ||
+      (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'NOT_FOUND')
     );
   }
 }
