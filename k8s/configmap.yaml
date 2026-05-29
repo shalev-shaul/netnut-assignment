@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netnut-config
+  namespace: netnut
+data:
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: netnut
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  JOB_MANAGER_HOST: job-manager
+  JOB_MANAGER_PORT: "3001"
+  API_PORT: "3000"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netnut-secrets
+  namespace: netnut
+type: Opaque
+stringData:
+  DB_USER: postgres
+  DB_PASS: postgres

@@ -1,0 +1,76 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach: API (9229)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true
+    },
+    {
+      "name": "Attach: Job Manager (9230)",
+      "type": "node",
+      "request": "attach",
+      "port": 9230,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true
+    },
+    {
+      "name": "Attach: Scraper (9231)",
+      "type": "node",
+      "request": "attach",
+      "port": 9231,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true
+    },
+    {
+      "name": "Launch: API",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["nest", "start", "api", "--debug", "--watch"],
+      "console": "integratedTerminal",
+      "restart": true,
+      "envFile": "${workspaceFolder}/apps/api/.env",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Launch: Job Manager",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["nest", "start", "job-manager", "--debug", "--watch"],
+      "console": "integratedTerminal",
+      "restart": true,
+      "envFile": "${workspaceFolder}/apps/job-manager/.env",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Launch: Scraper",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["nest", "start", "scraper", "--debug", "--watch"],
+      "console": "integratedTerminal",
+      "restart": true,
+      "envFile": "${workspaceFolder}/apps/scraper/.env",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Attach All",
+      "configurations": [
+        "Attach: API (9229)",
+        "Attach: Job Manager (9230)",
+        "Attach: Scraper (9231)"
+      ],
+      "stopAll": true
+    }
+  ]
+}

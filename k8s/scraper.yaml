@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper
+  namespace: netnut
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scraper
+  template:
+    metadata:
+      labels:
+        app: scraper
+    spec:
+      containers:
+        - name: scraper
+          image: netnut/scraper:latest
+          envFrom:
+            - configMapRef:
+                name: netnut-config
+            - secretRef:
+                name: netnut-secrets
