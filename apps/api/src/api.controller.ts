@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { CreateScrapeJobDto } from '@app/shared';
+import { CreateScrapeJobDto } from '@netnut/shared';
 import { ApiService } from './api.service';
 
 @Controller('scrape')

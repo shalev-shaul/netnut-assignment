@@ -1,6 +1,6 @@
 import { Controller, UsePipes, ValidationPipe } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { CreateScrapeJobDto, JOB_MANAGER_PATTERNS } from '@app/shared';
+import { CreateScrapeJobDto, JOB_MANAGER_PATTERNS } from '@netnut/shared';
 import { JobManagerService } from './job-manager.service';
 
 @Controller()

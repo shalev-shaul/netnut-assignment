@@ -1,8 +1,8 @@
 import { Job, JobStatus } from '../entities/job.entity';
 
 /**
- * Public-facing shape of a job. Deliberately omits the `proxy` field so
- * proxy credentials are never returned to API clients.
+ * Public-facing shape of a job. Deliberately omits the internal `useProxy`
+ * flag so the response only exposes what clients care about.
  */
 export interface JobResponse {
   id: string;

@@ -12,7 +12,7 @@ import {
   Job,
   JobResponse,
   toJobResponse,
-} from '@app/shared';
+} from '@netnut/shared';
 
 // Fail fast if the Job Manager is unreachable instead of hanging the request.
 const RPC_TIMEOUT_MS = 5000;

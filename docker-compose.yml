@@ -48,6 +48,14 @@ services:
       redis:
         condition: service_healthy
 
+  # Lightweight forward proxy for demonstrating the useProxy feature end-to-end.
+  # Jobs submitted with { "useProxy": true } are routed through this container.
+  proxy:
+    image: monokal/tinyproxy:latest
+    command: ANY
+    ports:
+      - '8888:8888'
+
   scraper:
     build:
       context: .
@@ -60,6 +68,8 @@ services:
       DB_NAME: netnut
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Points at the Tinyproxy container above (compose service DNS name).
+      PROXY_URL: http://proxy:8888
     depends_on:
       postgres:
         condition: service_healthy

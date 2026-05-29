@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
 import { Repository } from 'typeorm';
-import { CreateScrapeJobDto, Job, JobStatus, SCRAPE_JOB_PROCESS, SCRAPE_QUEUE } from '@app/shared';
+import { CreateScrapeJobDto, Job, JobStatus, SCRAPE_JOB_PROCESS, SCRAPE_QUEUE } from '@netnut/shared';
 
 @Injectable()
 export class JobManagerService {
@@ -19,14 +19,14 @@ export class JobManagerService {
   async createJob(dto: CreateScrapeJobDto): Promise<Job> {
     const job = this.jobRepo.create({
       url: dto.url,
-      proxy: dto.proxy ?? null,
+      useProxy: dto.useProxy ?? false,
       status: JobStatus.PENDING,
     });
     const saved = await this.jobRepo.save(job);
 
     await this.scrapeQueue.add(
       SCRAPE_JOB_PROCESS,
-      { jobId: saved.id, url: saved.url, proxy: saved.proxy },
+      { jobId: saved.id, url: saved.url, useProxy: saved.useProxy },
       { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
     );
 

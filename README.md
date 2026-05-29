@@ -34,7 +34,7 @@ See `architecture.drawio` (open in [draw.io](https://app.diagrams.net)).
 ```
 
 **Data stores:**
-- **PostgreSQL** – persists jobs (`scrape_jobs` table): id, url, proxy, status, html, errorMessage
+- **PostgreSQL** – persists jobs (`scrape_jobs` table): id, url, useProxy, status, html, errorMessage
 - **Redis** – BullMQ queue named `scrape`
 
 ---
@@ -60,7 +60,29 @@ See `architecture.drawio` (open in [draw.io](https://app.diagrams.net)).
 | Proxy Support | `https-proxy-agent` |
 | Validation | `class-validator` + `class-transformer` |
 | Inter-service | NestJS TCP Microservices |
+| Monorepo | npm workspaces (per-package `package.json`) |
 | Infrastructure | Docker Compose + Kubernetes |
+
+---
+
+## Monorepo Layout
+
+This is an **npm workspaces** monorepo — each app and the shared lib is its own
+package with its **own `package.json` and dependencies**:
+
+- `@netnut/shared` — built to `dist/`, consumed by the apps via the workspace
+  symlink in `node_modules`. Declares only `class-validator`, `class-transformer`,
+  `typeorm`, `reflect-metadata`.
+- `@netnut/api` — declares only the HTTP/microservice-client deps (no `typeorm`,
+  `bull`, `pg` or `axios`).
+- `@netnut/job-manager` — declares `typeorm`, `@nestjs/bull`, `pg`, etc.
+- `@netnut/scraper` — declares `axios`, `https-proxy-agent`, `typeorm`, `@nestjs/bull`, etc.
+
+This keeps each service's dependency surface (and Docker image) limited to what it
+actually uses. Build dev tooling (`@nestjs/cli`, `typescript`) lives once at the root.
+
+> Build order matters: `@netnut/shared` must be built before the apps (the root
+> `npm run build` script does this for you).
 
 ---
 
@@ -72,6 +94,7 @@ See `architecture.drawio` (open in [draw.io](https://app.diagrams.net)).
 
 ### 1. Install dependencies
 ```bash
+# Installs every workspace and links @netnut/shared into node_modules
 npm install
 ```
 
@@ -80,18 +103,51 @@ npm install
 docker-compose up postgres redis -d
 ```
 
-### 3. Copy env files (each app has its own)
-```bash
-cp apps/api/.env.example          apps/api/.env
-cp apps/job-manager/.env.example  apps/job-manager/.env
-cp apps/scraper/.env.example      apps/scraper/.env
+### 3. Create env files (each app has its own; values fall back to code defaults)
+
+`apps/api/.env`
+```
+API_PORT=3000
+JOB_MANAGER_HOST=localhost
+JOB_MANAGER_PORT=3001
+```
+
+`apps/job-manager/.env`
+```
+JOB_MANAGER_PORT=3001
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=postgres
+DB_PASS=postgres
+DB_NAME=netnut
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+`apps/scraper/.env`
+```
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=postgres
+DB_PASS=postgres
+DB_NAME=netnut
+REDIS_HOST=localhost
+REDIS_PORT=6379
+PROXY_URL=          # optional; set to http://localhost:8888 to use the Tinyproxy container
 ```
 
 > Each service loads only the variables it needs via its own `.env`
-> (`ConfigModule` `envFilePath`). In Docker/k8s these values come from the
+> (`ConfigModule` `envFilePath`). Every variable has a sensible default in code,
+> so the only one you typically must set locally is `DB_PORT=5433` (to match the
+> docker-compose port mapping). In Docker/k8s these values come from the
 > container environment, which takes precedence over the `.env` file.
 
-### 4. Start services (3 terminals)
+### 4. Build the shared lib (apps resolve `@netnut/shared` from its `dist/`)
+```bash
+npm run build:shared
+```
+
+### 5. Start services (3 terminals)
 ```bash
 # Terminal 1 – Job Manager
 npm run start:dev:job-manager
@@ -102,6 +158,10 @@ npm run start:dev:scraper
 # Terminal 3 – API
 npm run start:dev:api
 ```
+
+> If you change code in `libs/shared`, rebuild it (`npm run build:shared`, or run
+> `npm run build:watch -w @netnut/shared` in its own terminal) so the apps pick up
+> the changes.
 
 ### Or: run everything with Docker Compose
 ```bash
@@ -120,9 +180,13 @@ Content-Type: application/json
 
 {
   "url": "https://example.com",
-  "proxy": "http://user:pass@proxy-host:8080"   // optional
+  "useProxy": true   // optional, defaults to false
 }
 ```
+
+> `useProxy` is a boolean **intent** flag. The client never supplies a proxy
+> connection string — the actual proxy is configured operator-side via the
+> `PROXY_URL` env var / k8s Secret (see [Proxy Support](#proxy-support)).
 
 **Response** `201 Created`:
 ```json
@@ -162,16 +226,48 @@ GET /scrape/:id
 
 ## Proxy Support
 
-Pass an optional `proxy` field in the request body:
+The proxy feature is a **boolean toggle**, not a client-supplied URL. A request
+opts in with `useProxy: true`:
 
 ```json
 {
   "url": "https://example.com",
-  "proxy": "http://user:password@proxy.example.com:8080"
+  "useProxy": true
 }
 ```
 
-The Scraper uses `https-proxy-agent` to route the HTTP request through the proxy. Both HTTP and HTTPS targets are supported.
+The client only expresses *intent*. The actual proxy connection string lives in
+operator config — the `PROXY_URL` environment variable (a k8s **Secret** in
+production, since real proxy URLs carry credentials). When a job has
+`useProxy: true`, the Scraper reads `PROXY_URL` and routes the request through it
+with `https-proxy-agent`. Both HTTP and HTTPS targets are supported.
+
+**Why this design rather than a client-supplied proxy URL?**
+- The proxy endpoint (and its credentials) are deployment config, not request data — so they belong in a Secret, never in the request body or the DB.
+- Credentials never reach the client, never get persisted, never leak in logs (the URL is redacted when logged).
+- The operator controls *which* proxy; the client only controls *whether* to use one.
+
+**`PROXY_URL` format:** `http://[user:pass@]host:port`
+- Production example (a commercial gateway): `http://USER:PASS@gw.netnut.io:5959`
+- If `useProxy: true` but `PROXY_URL` is empty, the job **fails loudly** rather than silently falling back to a direct fetch (which would leak the real egress IP).
+
+### Trying it locally
+
+`docker-compose` ships a [Tinyproxy](https://tinyproxy.github.io/) container so
+you can demo the feature with zero external accounts. It's already wired into the
+scraper via `PROXY_URL=http://proxy:8888`. Just bring the stack up and submit a
+job with `"useProxy": true` — you'll see the request flow through Tinyproxy's
+logs:
+
+```bash
+docker-compose up --build
+docker-compose logs -f proxy   # watch requests being relayed
+```
+
+To use it when running the scraper outside Docker, set in `apps/scraper/.env`:
+```
+PROXY_URL=http://localhost:8888
+```
 
 ---
 
@@ -210,41 +306,42 @@ kubectl scale deployment scraper --replicas=5 -n netnut
 ```
 netnut-assignment/
 ├── apps/
-│   ├── api/                  # REST gateway
+│   ├── api/                      # @netnut/api – REST gateway
 │   │   ├── src/
 │   │   │   ├── api.controller.ts
 │   │   │   ├── api.service.ts
 │   │   │   ├── api.module.ts
+│   │   │   ├── health.controller.ts
 │   │   │   └── main.ts
 │   │   ├── Dockerfile
-│   │   └── tsconfig.app.json
-│   ├── job-manager/          # TCP microservice
-│   │   ├── src/
-│   │   │   ├── job-manager.controller.ts
-│   │   │   ├── job-manager.service.ts
-│   │   │   ├── job-manager.module.ts
-│   │   │   └── main.ts
+│   │   ├── nest-cli.json
+│   │   ├── tsconfig.json
+│   │   └── package.json          # ← own deps
+│   ├── job-manager/              # @netnut/job-manager – TCP microservice
+│   │   ├── src/ ...
 │   │   ├── Dockerfile
-│   │   └── tsconfig.app.json
-│   └── scraper/              # BullMQ worker
-│       ├── src/
-│       │   ├── scraper.processor.ts
-│       │   ├── scraper.service.ts
-│       │   ├── scraper.module.ts
-│       │   └── main.ts
+│   │   ├── nest-cli.json
+│   │   ├── tsconfig.json
+│   │   └── package.json          # ← own deps
+│   └── scraper/                  # @netnut/scraper – BullMQ worker
+│       ├── src/ ...
 │       ├── Dockerfile
-│       └── tsconfig.app.json
+│       ├── nest-cli.json
+│       ├── tsconfig.json
+│       └── package.json          # ← own deps
 ├── libs/
-│   └── shared/               # Shared DTOs, entities, constants
-│       └── src/
-│           ├── dto/scrape-job.dto.ts
-│           ├── entities/job.entity.ts
-│           ├── constants/queue.constants.ts
-│           └── index.ts
-├── k8s/                      # Kubernetes manifests
-├── architecture.drawio       # System architecture diagram
+│   └── shared/                   # @netnut/shared – DTOs, entity, utils
+│       ├── src/
+│       │   ├── dto/
+│       │   ├── entities/job.entity.ts
+│       │   ├── constants/queue.constants.ts
+│       │   ├── utils/url-safety.ts
+│       │   └── index.ts
+│       ├── tsconfig.json
+│       └── package.json          # ← own deps, built to dist/
+├── k8s/                          # Kubernetes manifests
+├── architecture.drawio           # System architecture diagram
 ├── docker-compose.yml
-├── nest-cli.json
-├── tsconfig.json
-└── package.json
+├── tsconfig.base.json            # shared compiler options
+└── package.json                  # workspaces config + orchestration scripts
 ```

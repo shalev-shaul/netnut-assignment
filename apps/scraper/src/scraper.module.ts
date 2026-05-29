@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { Job } from '@app/shared';
+import { Job } from '@netnut/shared';
 import { ScraperProcessor } from './scraper.processor';
 import { ScraperService } from './scraper.service';
 
@@ -10,7 +10,7 @@ import { ScraperService } from './scraper.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: 'apps/scraper/.env',
+      envFilePath: '.env',
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],

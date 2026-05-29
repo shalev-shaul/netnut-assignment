@@ -22,3 +22,7 @@ type: Opaque
 stringData:
   DB_USER: postgres
   DB_PASS: postgres
+  # Proxy connection string for jobs with useProxy:true (consumed by scraper).
+  # Real values carry credentials (http://user:pass@gateway:port) — hence Secret.
+  # Leave empty to disable; such jobs will then fail loudly.
+  PROXY_URL: ""

@@ -10,7 +10,7 @@ import { HealthController } from './health.controller';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: 'apps/api/.env',
+      envFilePath: '.env',
     }),
     ClientsModule.registerAsync([
       {

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUrl } from 'class-validator';
+import { IsBoolean, IsOptional, IsUrl } from 'class-validator';
 
 export class CreateScrapeJobDto {
   @IsUrl(
@@ -7,7 +7,12 @@ export class CreateScrapeJobDto {
   )
   url: string;
 
+  /**
+   * Whether to route the fetch through the proxy configured on the Scraper
+   * (PROXY_URL env / k8s Secret). The client only expresses intent — it never
+   * supplies the proxy connection string.
+   */
   @IsOptional()
-  @IsString()
-  proxy?: string;
+  @IsBoolean()
+  useProxy?: boolean;
 }

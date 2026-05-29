@@ -21,8 +21,8 @@ export class Job {
   @Column()
   url: string;
 
-  @Column({ nullable: true })
-  proxy: string;
+  @Column({ default: false })
+  useProxy: boolean;
 
   @Column({ type: 'enum', enum: JobStatus, default: JobStatus.PENDING })
   status: JobStatus;

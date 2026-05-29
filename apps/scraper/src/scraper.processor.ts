@@ -9,13 +9,13 @@ import {
   SCRAPE_JOB_PROCESS,
   SCRAPE_QUEUE,
   UnsafeUrlError,
-} from '@app/shared';
+} from '@netnut/shared';
 import { ScraperService } from './scraper.service';
 
 interface ScrapeJobData {
   jobId: string;
   url: string;
-  proxy?: string;
+  useProxy?: boolean;
 }
 
 @Processor(SCRAPE_QUEUE)
@@ -30,13 +30,13 @@ export class ScraperProcessor {
 
   @Process(SCRAPE_JOB_PROCESS)
   async handleScrape(bullJob: BullJob<ScrapeJobData>) {
-    const { jobId, url, proxy } = bullJob.data;
+    const { jobId, url, useProxy } = bullJob.data;
     this.logger.log(`Processing job ${jobId}: ${url}`);
 
     await this.jobRepo.update(jobId, { status: JobStatus.PROCESSING });
 
     try {
-      const html = await this.scraperService.fetchUrl(url, proxy);
+      const html = await this.scraperService.fetchUrl(url, useProxy);
       await this.jobRepo.update(jobId, {
         status: JobStatus.DONE,
         html,

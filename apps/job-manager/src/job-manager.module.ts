@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { Job } from '@app/shared';
+import { Job } from '@netnut/shared';
 import { JobManagerController } from './job-manager.controller';
 import { JobManagerService } from './job-manager.service';
 
@@ -10,7 +10,7 @@ import { JobManagerService } from './job-manager.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: 'apps/job-manager/.env',
+      envFilePath: '.env',
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
