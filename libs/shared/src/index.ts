@@ -1,5 +1,4 @@
 export * from './dto/scrape-job.dto';
-export * from './dto/job-response.dto';
 export * from './entities/job.entity';
 export * from './config/typeorm.config';
 export * from './constants/queue.constants';
@@ -8,3 +7,5 @@ export * from './enums/job-manager-pattern.enum';
 export * from './providers/validation-pipe.provider';
 export * from './utils/url-safety';
 export * from './errors/errors';
+export * from './filters/rpc-http-exception.filter';
+export * from './filters/domain-rpc-exception.filter';

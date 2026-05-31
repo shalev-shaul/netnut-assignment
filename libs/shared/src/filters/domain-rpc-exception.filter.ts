@@ -1,6 +1,6 @@
 import { ArgumentsHost, Catch, RpcExceptionFilter } from '@nestjs/common';
 import { Observable, throwError } from 'rxjs';
-import { NotFoundError } from '@netnut/shared';
+import { NotFoundError } from '../errors/errors';
 
 /**
  * Serializes domain errors into an RpcException-style payload so they survive
@@ -11,6 +11,9 @@ import { NotFoundError } from '@netnut/shared';
  *
  * Only known domain errors are caught; everything else falls through to the
  * default handler (logged + generic message), so internals never leak.
+ *
+ * Register in a microservice module via:
+ *   { provide: APP_FILTER, useClass: DomainRpcExceptionFilter }
  */
 @Catch(NotFoundError)
 export class DomainRpcExceptionFilter implements RpcExceptionFilter<NotFoundError> {

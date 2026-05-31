@@ -8,16 +8,16 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
  * `autoLoadEntities` pulls in whatever each app registers via the module's
  * `forRoot([...])`, so the connection config stays entity-agnostic.
  *
- * Values come from each app's environment (with sensible local defaults).
+ * Values come from each app's environment.
  */
 export function typeOrmConfig(config: ConfigService): TypeOrmModuleOptions {
   return {
     type: 'postgres',
-    host: config.get('DB_HOST', 'localhost'),
-    port: config.get<number>('DB_PORT', 5432),
-    username: config.get('DB_USER', 'postgres'),
-    password: config.get('DB_PASS', 'postgres'),
-    database: config.get('DB_NAME', 'netnut'),
+    host: config.get('DB_HOST'),
+    port: config.get<number>('DB_PORT'),
+    username: config.get('DB_USER'),
+    password: config.get('DB_PASS'),
+    database: config.get('DB_NAME'),
     autoLoadEntities: true,
     synchronize: true,
   };

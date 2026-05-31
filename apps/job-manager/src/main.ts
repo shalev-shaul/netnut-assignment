@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { JobManagerModule } from './job-manager.module';
-import { DomainRpcExceptionFilter } from './filters/domain-rpc-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.createMicroservice(
@@ -14,8 +13,6 @@ async function bootstrap() {
       },
     },
   );
-
-  app.useGlobalFilters(new DomainRpcExceptionFilter());
 
   await app.listen();
 

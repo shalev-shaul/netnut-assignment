@@ -29,11 +29,7 @@ export class JobManagerService {
 
   private async enqueueScrapeJob(job: Job): Promise<void> {
     try {
-      await this.scrapeQueue.add(
-        SCRAPE_JOB_PROCESS,
-        { jobId: job.id, url: job.url, useProxy: job.useProxy },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      );
+      await this.addQueueJob(job);
       this.logger.log(`Enqueued job ${job.id} for URL: ${job.url}`);
     } catch (err) {
       await this.jobRepo.update(job.id, {
@@ -43,6 +39,14 @@ export class JobManagerService {
       this.logger.error(`Failed to enqueue job ${job.id}: ${(err as Error).message}`);
       throw new Error('Failed to enqueue scrape job');
     }
+  }
+
+  private addQueueJob(job: Job) {
+    return this.scrapeQueue.add(
+      SCRAPE_JOB_PROCESS,
+      { jobId: job.id, url: job.url, useProxy: job.useProxy },
+      { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+    );
   }
 
   async getJob(id: string) {

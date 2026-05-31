@@ -16,8 +16,8 @@ import { ScraperService } from './scraper.service';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         redis: {
-          host: config.get('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
+          host: config.get('REDIS_HOST'),
+          port: config.get('REDIS_PORT'),
         },
       }),
     }),

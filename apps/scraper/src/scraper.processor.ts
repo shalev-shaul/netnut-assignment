@@ -23,8 +23,7 @@ export class ScraperProcessor {
   private readonly logger = new Logger(ScraperProcessor.name);
 
   constructor(
-    @InjectRepository(Job)
-    private readonly jobRepo: Repository<Job>,
+    @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
     private readonly scraperService: ScraperService,
   ) {}
 
@@ -50,8 +49,6 @@ export class ScraperProcessor {
         errorMessage,
       });
 
-      // An unsafe URL (SSRF rejection) is a permanent failure — retrying
-      // would only waste attempts. Swallow it so BullMQ does not retry.
       if (err instanceof UnsafeUrlError) {
         return;
       }
