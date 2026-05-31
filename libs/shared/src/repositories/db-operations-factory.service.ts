@@ -9,10 +9,7 @@ export class DbOperationsFactoryService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
-  getService<T extends ObjectLiteral>(
-    collectionName: EntityTarget<T>,
-    dbName?: string,
-  ): DbOperationsService<T> {
-    return new DbOperationsService<T>(this.dataSource, collectionName, dbName);
+  getService<T extends ObjectLiteral>(collectionName: EntityTarget<T>,) {
+    return new DbOperationsService<T>(this.dataSource, collectionName);
   }
 }
