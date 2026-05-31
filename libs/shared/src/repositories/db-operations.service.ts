@@ -13,6 +13,7 @@ export class DbOperationsService<T extends ObjectLiteral> {
   async create(data: Partial<T>): Promise<T> {
     const entity = this.repo.create(data as DeepPartial<T>);
     const saved = await this.repo.save(entity);
+    
     return saved as T;
   }
 
@@ -25,7 +26,7 @@ export class DbOperationsService<T extends ObjectLiteral> {
   async update(id: string, data: Partial<T>): Promise<void> {
     await this.repo.update(
       id,
-      data as unknown as Parameters<Repository<T>['update']>[1],
+      data as Parameters<Repository<T>['update']>[1],
     );
   }
 

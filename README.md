@@ -110,10 +110,14 @@ image, so reviewers can demo `useProxy: true` end-to-end **with no external
 account or credentials** — just `docker-compose up`. In production this slot is
 filled by a real commercial gateway (e.g. NetNut), supplied via a Secret.
 
-### axios + https-proxy-agent
+### axios + http/https-proxy-agent
 `axios` for the HTTP fetch (timeouts, redirect limits, content-length caps,
-`responseType` control), and `https-proxy-agent` to tunnel that fetch through the
-operator-configured proxy when requested.
+`responseType` control). For proxying, the agent is chosen by the **target's
+scheme**: an `https://` target is `CONNECT`-tunnelled through the proxy via
+**`https-proxy-agent`**, while an `http://` target uses an absolute-URI request to
+the proxy via **`http-proxy-agent`**. Both are set on the request and axios selects
+the one matching the target, so plain-HTTP and HTTPS targets (and redirects across
+schemes) are both proxied correctly.
 
 ### Zod (env validation)
 Config is validated at **boot** so a missing/garbage variable fails fast with a
@@ -178,31 +182,36 @@ updating the row.
 These are the "small things" that make the solution production-minded rather than
 a happy-path demo.
 
-### 🧱 Persistence behind a generic port + factory (`libs/shared/src/repositories/`)
-The services don't depend on TypeORM — they depend on a persistence **port**.
-The layer is built so you never hand-write a repository per entity:
-- **`BaseRepository<T>`** — the generic port: `create` / `findById` / `update` /
-  `find` / `delete` / `count`, expressed with plain `Partial<T>` and **no ORM
-  types**.
-- **`TypeOrmRepository<T>`** — one generic adapter that implements the port for
-  *any* entity; it's the only file that touches TypeORM's `Repository` API.
-- **`createRepositoryProvider(entity, token)`** — a **factory** that builds the
-  NestJS provider: you pass the entity, it injects `Repository<entity>` and wraps
-  it. Adding a new entity's repo is a one-liner, not a new class.
-- **`JobRepository`** — a thin *named token* (`extends BaseRepository<Job>`) so
-  services inject a clear, entity-specific type. Wired in one place,
-  **`JobPersistenceModule`**, which also owns the DB connection:
+### 🧱 Persistence centralized in one generic service + factory (`libs/shared/src/repositories/`)
+The services don't sprinkle TypeORM calls around — all CRUD goes through a single
+generic service, parameterized by the collection it operates on. There's no
+hand-written repository per entity:
+- **`DbOperationsService<T>`** — one **generic CRUD service** (`create` /
+  `findById` / `update` / `find` / `delete` / `count`). It's constructed with the
+  collection (entity) it targets and is the **only place that touches TypeORM's
+  `Repository` API**.
+- **`DbOperationsFactoryService`** — an `@Injectable()` **factory**. A service
+  injects it once and asks for a CRUD service bound to whatever collection it
+  needs, in its constructor:
   ```ts
-  providers: [createRepositoryProvider(Job, JobRepository)]
+  constructor(private readonly dbFactory: DbOperationsFactoryService) {
+    this.jobDbOperation = this.dbFactory.getService<Job>(Job);
+  }
   ```
+- **`TypeOrmConnectionModule.forRoot([Job])`** — opens the DB connection, loads the
+  entity metadata the service uses, and provides+exports the factory. A service
+  lists the collections it touches at this one call site.
 
-Two payoffs:
-- **Swappable datastore** — moving off Postgres (e.g. to Mongo) means writing one
-  new generic adapter and pointing the factory at it; **no service code changes**.
-  (Honest caveat: it's a new adapter, not "just a connection string" — the
-  abstraction is a clean seam, not a free lunch.)
-- **Testability** — `JobManagerService`/`ScraperProcessor` can be unit-tested
-  against a trivial in-memory fake of `JobRepository`, no database required.
+Payoffs:
+- **Localized datastore change** — moving off Postgres (e.g. to Mongo) means
+  writing a sibling operations-service against the same CRUD surface and pointing
+  the factory at a new connection. The change is **confined to this folder**, not
+  scattered across services. (Honest framing: it's a real adapter + connection to
+  write, not a config flip — the value is that persistence lives in one swappable
+  seam.)
+- **Testability** — `JobManagerService`/`ScraperProcessor` reach the DB only
+  through the injected factory, so they can be unit-tested against a fake that
+  returns an in-memory CRUD service — no database required.
 
 ### 🔒 SSRF protection (`libs/shared/src/utils/url-safety.ts`)
 A scraper that fetches arbitrary user-supplied URLs is a classic **SSRF** vector.
@@ -283,11 +292,11 @@ tooling or unused deps.
 | Async work queue | **BullMQ** + `@nestjs/bull` on **Redis 7** |
 | Persistence | **PostgreSQL 16** via **TypeORM** + `pg` |
 | HTTP fetching | `axios` |
-| Proxy | `https-proxy-agent` (+ **Tinyproxy** for local demo) |
+| Proxy | `http-proxy-agent` + `https-proxy-agent` (agent picked by target scheme; **Tinyproxy** for local demo) |
 | Request validation | `class-validator` + `class-transformer` (global `ValidationPipe`) |
 | Env validation | **Zod** (`ConfigModule` `validate`, fail-fast at boot) |
 | Health checks | `@nestjs/terminus` |
-| Error mapping | custom `RpcExceptionFilter` + `BaseExceptionFilter` |
+| Error mapping | custom `DomainRpcExceptionFilter` (JM side) + `RpcHttpExceptionFilter` (API side) |
 | Monorepo | npm workspaces (per-package `package.json`) |
 | Infrastructure | Docker Compose + Kubernetes manifests |
 
@@ -299,14 +308,15 @@ An **npm workspaces** monorepo — each app and the shared lib is its own packag
 with its **own `package.json` and dependency surface**:
 
 - `@netnut/shared` — built to `dist/`, consumed by the apps via the workspace
-  symlink. Holds the **DTOs, the `Job` entity, the `JobRepository` persistence
-  port + its TypeORM adapter, the SSRF utils, the two exception filters, the Zod
-  env schemas, queue constants and the TypeORM config** — the single source of
-  truth shared across services.
+  symlink. Holds the **DTOs, the `Job` entity, the generic `DbOperationsService` +
+  `DbOperationsFactoryService` (persistence), the `TypeOrmConnectionModule`, the
+  SSRF utils, the two exception filters, the Zod env schemas, queue constants and
+  the TypeORM config** — the single source of truth shared across services.
 - `@netnut/api` — only HTTP / microservice-client / terminus deps (no `typeorm`,
   `bull`, `pg`, `axios`).
 - `@netnut/job-manager` — `typeorm`, `@nestjs/bull`, `pg`, …
-- `@netnut/scraper` — `axios`, `https-proxy-agent`, `typeorm`, `@nestjs/bull`, …
+- `@netnut/scraper` — `axios`, `http-proxy-agent`, `https-proxy-agent`, `typeorm`,
+  `@nestjs/bull`, …
 
 > **Build order matters:** `@netnut/shared` must be built before the apps. The root
 > `npm run build` script does this for you.
@@ -458,8 +468,9 @@ The proxy feature is a **boolean toggle**, not a client-supplied URL. A request
 opts in with `"useProxy": true`. The client only expresses *intent*; the actual
 connection string lives in operator config — the `PROXY_URL` environment variable
 (a k8s **Secret** in production, since real proxy URLs carry credentials). The
-Scraper reads `PROXY_URL` and routes the request through it with
-`https-proxy-agent`.
+Scraper reads `PROXY_URL` and routes the request through it, selecting the proxy
+agent by target scheme — `https-proxy-agent` (CONNECT tunnel) for `https://`
+targets, `http-proxy-agent` (absolute-URI request) for `http://` targets.
 
 **Why intent, not a client URL?**
 - The proxy endpoint and its credentials are **deployment config, not request
@@ -535,6 +546,11 @@ design leaves room for each:
   rationale and the drop-in migration path.
 - **`synchronize: true`** is convenient for the demo but unsafe in production —
   swap for **TypeORM migrations**.
+- **SSRF — per-redirect revalidation.** `assertUrlIsSafe` validates the *initial*
+  URL, but axios follows redirects automatically (`maxRedirects: 5`), so a public
+  URL that 3xx-redirects to an internal address (e.g. `169.254.169.254`) would be
+  fetched unchecked — a TOCTOU gap. Hardening: set `maxRedirects: 0` and follow
+  redirects manually, re-running `assertUrlIsSafe` on each `Location` hop.
 - **Indexes** on `status` / `createdAt` once you query by them.
 - **Observability** — structured (JSON) logging + a **correlation id** propagated
   API → Job Manager → Scraper so one request is traceable end-to-end; Prometheus
@@ -564,13 +580,10 @@ netnut-assignment/
 │           ├── enums/job-manager-pattern.enum.ts
 │           ├── constants/queue.constants.ts
 │           ├── config/{typeorm.config,env-validation}.ts
-│           ├── database/typeorm-connection.module.ts
-│           ├── repositories/                 # generic persistence port + factory
-│           │   ├── base-repository.ts            # BaseRepository<T> (generic port)
-│           │   ├── typeorm.repository.ts         # TypeOrmRepository<T> (generic adapter)
-│           │   ├── repository.factory.ts         # createRepositoryProvider(entity, token)
-│           │   ├── job.repository.ts             # JobRepository (named token : BaseRepository<Job>)
-│           │   └── job-persistence.module.ts     # wires factory + connection
+│           ├── database/typeorm-connection.module.ts  # opens connection + provides the factory
+│           ├── repositories/                 # generic persistence (one service + factory)
+│           │   ├── db-operations.service.ts         # DbOperationsService<T> (generic CRUD, the only TypeORM-aware file)
+│           │   └── db-operations-factory.service.ts # DbOperationsFactoryService.getService<T>(collection)
 │           ├── errors/errors.ts
 │           ├── filters/{domain-rpc-exception,rpc-http-exception}.filter.ts
 │           ├── providers/validation-pipe.provider.ts

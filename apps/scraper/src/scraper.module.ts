@@ -7,6 +7,7 @@ import {
   databaseEnvSchema,
   Job,
   redisEnvSchema,
+  scraperEnvSchema,
   SCRAPE_QUEUE,
   TypeOrmConnectionModule,
 } from '@netnut/shared';
@@ -21,6 +22,7 @@ import { ScraperService } from './scraper.service';
       validate: createEnvValidator({
         ...databaseEnvSchema,
         ...redisEnvSchema,
+        ...scraperEnvSchema,
         PROXY_URL: z.string().url().optional(),
       }),
     }),

@@ -15,7 +15,7 @@ export class JobManagerService {
     this.jobDbOperation = this.dbFactory.getService<Job>(Job);
   }
 
-  async createJob(dto: CreateScrapeJobDto): Promise<Job> {
+  async createJob(dto: CreateScrapeJobDto) {
     const saved = await this.jobDbOperation.create({
       url: dto.url,
       useProxy: dto.useProxy ?? false,
