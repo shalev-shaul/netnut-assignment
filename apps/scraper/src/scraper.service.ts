@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosRequestConfig } from 'axios';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { assertUrlIsSafe, redactProxy } from '@netnut/shared';
+import { assertUrlIsSafe } from '@netnut/shared';
 
 @Injectable()
 export class ScraperService {
@@ -31,7 +31,7 @@ export class ScraperService {
 
     this.logger.log(
       `Fetching URL: ${url}${
-        proxyUrl ? ` via proxy ${redactProxy(proxyUrl)}` : ''
+        proxyUrl ? ` via proxy ${proxyUrl}` : ''
       }`,
     );
 

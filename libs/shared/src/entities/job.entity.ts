@@ -1,17 +1,5 @@
-import {
-  Column,
-  CreateDateColumn,
-  Entity,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
-} from 'typeorm';
-
-export enum JobStatus {
-  PENDING = 'pending',
-  PROCESSING = 'processing',
-  DONE = 'done',
-  FAILED = 'failed',
-}
+import {Column,CreateDateColumn,Entity,PrimaryGeneratedColumn,UpdateDateColumn} from 'typeorm';
+import { JobStatus } from '../enums/job.enum';
 
 @Entity('scrape_jobs')
 export class Job {

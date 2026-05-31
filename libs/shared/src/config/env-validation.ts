@@ -15,17 +15,9 @@ export const redisEnvSchema = {
   REDIS_PORT: portSchema,
 };
 
-/**
- * Scraper fetch-tuning knobs. Optional: they have sane defaults, so a deployment
- * only sets them to override. If set, they must be positive integers (fail-fast).
- */
 export const scraperEnvSchema = {
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
-  MAX_CONTENT_BYTES: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(10 * 1024 * 1024),
+  MAX_CONTENT_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
 };
 
 export function createEnvValidator<T extends z.ZodRawShape>(shape: T) {
