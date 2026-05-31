@@ -1,9 +1,9 @@
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Job as BullJob } from 'bull';
-import { Repository } from 'typeorm';
 import {
+  DbOperationsFactoryService,
+  DbOperationsService,
   Job,
   JobStatus,
   SCRAPE_JOB_PROCESS,
@@ -22,10 +22,14 @@ interface ScrapeJobData {
 export class ScraperProcessor {
   private readonly logger = new Logger(ScraperProcessor.name);
 
+  private readonly jobRepo: DbOperationsService<Job>;
+
   constructor(
-    @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
+    private readonly dbFactory: DbOperationsFactoryService,
     private readonly scraperService: ScraperService,
-  ) {}
+  ) {
+    this.jobRepo = this.dbFactory.getService<Job>(Job);
+  }
 
   @Process(SCRAPE_JOB_PROCESS)
   async handleScrape(bullJob: BullJob<ScrapeJobData>) {

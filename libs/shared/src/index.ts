@@ -4,6 +4,8 @@ export * from './config/typeorm.config';
 export * from './config/env-validation';
 export * from './constants/queue.constants';
 export * from './database/typeorm-connection.module';
+export * from './repositories/db-operations.service';
+export * from './repositories/db-operations-factory.service';
 export * from './enums/job-manager-pattern.enum';
 export * from './providers/validation-pipe.provider';
 export * from './utils/url-safety';

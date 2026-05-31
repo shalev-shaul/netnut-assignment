@@ -178,6 +178,32 @@ updating the row.
 These are the "small things" that make the solution production-minded rather than
 a happy-path demo.
 
+### 🧱 Persistence behind a generic port + factory (`libs/shared/src/repositories/`)
+The services don't depend on TypeORM — they depend on a persistence **port**.
+The layer is built so you never hand-write a repository per entity:
+- **`BaseRepository<T>`** — the generic port: `create` / `findById` / `update` /
+  `find` / `delete` / `count`, expressed with plain `Partial<T>` and **no ORM
+  types**.
+- **`TypeOrmRepository<T>`** — one generic adapter that implements the port for
+  *any* entity; it's the only file that touches TypeORM's `Repository` API.
+- **`createRepositoryProvider(entity, token)`** — a **factory** that builds the
+  NestJS provider: you pass the entity, it injects `Repository<entity>` and wraps
+  it. Adding a new entity's repo is a one-liner, not a new class.
+- **`JobRepository`** — a thin *named token* (`extends BaseRepository<Job>`) so
+  services inject a clear, entity-specific type. Wired in one place,
+  **`JobPersistenceModule`**, which also owns the DB connection:
+  ```ts
+  providers: [createRepositoryProvider(Job, JobRepository)]
+  ```
+
+Two payoffs:
+- **Swappable datastore** — moving off Postgres (e.g. to Mongo) means writing one
+  new generic adapter and pointing the factory at it; **no service code changes**.
+  (Honest caveat: it's a new adapter, not "just a connection string" — the
+  abstraction is a clean seam, not a free lunch.)
+- **Testability** — `JobManagerService`/`ScraperProcessor` can be unit-tested
+  against a trivial in-memory fake of `JobRepository`, no database required.
+
 ### 🔒 SSRF protection (`libs/shared/src/utils/url-safety.ts`)
 A scraper that fetches arbitrary user-supplied URLs is a classic **SSRF** vector.
 Before any socket opens, `assertUrlIsSafe()`:
@@ -273,9 +299,10 @@ An **npm workspaces** monorepo — each app and the shared lib is its own packag
 with its **own `package.json` and dependency surface**:
 
 - `@netnut/shared` — built to `dist/`, consumed by the apps via the workspace
-  symlink. Holds the **DTOs, the `Job` entity, the SSRF utils, the two exception
-  filters, the Zod env schemas, queue constants and the TypeORM config** — the
-  single source of truth shared across services.
+  symlink. Holds the **DTOs, the `Job` entity, the `JobRepository` persistence
+  port + its TypeORM adapter, the SSRF utils, the two exception filters, the Zod
+  env schemas, queue constants and the TypeORM config** — the single source of
+  truth shared across services.
 - `@netnut/api` — only HTTP / microservice-client / terminus deps (no `typeorm`,
   `bull`, `pg`, `axios`).
 - `@netnut/job-manager` — `typeorm`, `@nestjs/bull`, `pg`, …
@@ -538,6 +565,12 @@ netnut-assignment/
 │           ├── constants/queue.constants.ts
 │           ├── config/{typeorm.config,env-validation}.ts
 │           ├── database/typeorm-connection.module.ts
+│           ├── repositories/                 # generic persistence port + factory
+│           │   ├── base-repository.ts            # BaseRepository<T> (generic port)
+│           │   ├── typeorm.repository.ts         # TypeOrmRepository<T> (generic adapter)
+│           │   ├── repository.factory.ts         # createRepositoryProvider(entity, token)
+│           │   ├── job.repository.ts             # JobRepository (named token : BaseRepository<Job>)
+│           │   └── job-persistence.module.ts     # wires factory + connection
 │           ├── errors/errors.ts
 │           ├── filters/{domain-rpc-exception,rpc-http-exception}.filter.ts
 │           ├── providers/validation-pipe.provider.ts

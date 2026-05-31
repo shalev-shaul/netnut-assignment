@@ -1,26 +1,26 @@
 import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
-import { Repository } from 'typeorm';
-import { CreateScrapeJobDto, Job, JobStatus, SCRAPE_JOB_PROCESS, SCRAPE_QUEUE, NotFoundError } from '@netnut/shared';
+import { CreateScrapeJobDto, DbOperationsFactoryService, DbOperationsService, Job, JobStatus, SCRAPE_JOB_PROCESS, SCRAPE_QUEUE, NotFoundError } from '@netnut/shared';
 
 @Injectable()
 export class JobManagerService {
   private readonly logger = new Logger(JobManagerService.name);
+  private readonly jobRepo: DbOperationsService<Job>;
 
   constructor(
-    @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
+    private readonly dbFactory: DbOperationsFactoryService,
     @InjectQueue(SCRAPE_QUEUE) private readonly scrapeQueue: Queue,
-  ) {}
+  ) {
+    this.jobRepo = this.dbFactory.getService<Job>(Job);
+  }
 
   async createJob(dto: CreateScrapeJobDto): Promise<Job> {
-    const job = this.jobRepo.create({
+    const saved = await this.jobRepo.create({
       url: dto.url,
       useProxy: dto.useProxy ?? false,
       status: JobStatus.PENDING,
     });
-    const saved = await this.jobRepo.save(job);
 
     await this.enqueueScrapeJob(saved);
 
@@ -50,7 +50,7 @@ export class JobManagerService {
   }
 
   async getJob(id: string) {
-    const job = await this.jobRepo.findOne({ where: { id } });
+    const job = await this.jobRepo.findById(id);
 
     if(!job){
       throw new NotFoundError("Job doesn't exists")

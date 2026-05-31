@@ -3,12 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EntityClassOrSchema } from '@nestjs/typeorm/dist/interfaces/entity-class-or-schema.type';
 import { typeOrmConfig } from '../config/typeorm.config';
+import { DbOperationsFactoryService } from '../repositories/db-operations-factory.service';
 
 @Module({})
 export class TypeOrmConnectionModule {
   static forRoot(entities: EntityClassOrSchema[]): DynamicModule {
-    const repositories = TypeOrmModule.forFeature(entities);
-
     return {
       module: TypeOrmConnectionModule,
       imports: [
@@ -16,9 +15,10 @@ export class TypeOrmConnectionModule {
           inject: [ConfigService],
           useFactory: typeOrmConfig,
         }),
-        repositories,
+        TypeOrmModule.forFeature(entities),
       ],
-      exports: [repositories],
+      providers: [DbOperationsFactoryService],
+      exports: [DbOperationsFactoryService],
     };
   }
 }
