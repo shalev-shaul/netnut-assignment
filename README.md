@@ -54,7 +54,7 @@ The diagram lives in **`architecture.drawio`** (open at
                                           ┌──────────────┐     └─────┬──────┘
                                           │   Scraper    │ ◄─────────┘ consume
                                           │  (2 workers) │
-                                          │ • SSRF guard │
+                                          │ • URL check  │
                                           │ • axios.get  │ ──► (optional proxy) ──► target
                                           │ • store HTML │ ─────► PostgreSQL
                                           └──────────────┘
@@ -139,7 +139,7 @@ one row per submitted job, mutated in place as the job moves through its states.
 | `useProxy` | `boolean` (default `false`) | no | The client's **intent** to route through the operator proxy — *not* a proxy URL. See below. |
 | `status` | `enum` (`pending`/`processing`/`done`/`failed`) | no | Job lifecycle. Defaults to `pending` on insert. |
 | `html` | `text` | yes | The fetched HTML. `null` until the job reaches `done`. **See the storage note below.** |
-| `errorMessage` | `varchar` | yes | Populated on `failed` (e.g. SSRF rejection, fetch error). `null` otherwise. |
+| `errorMessage` | `varchar` | yes | Populated on `failed` (e.g. invalid URL, fetch timeout/error). `null` otherwise. |
 | `createdAt` | `timestamptz` | no | `@CreateDateColumn`. |
 | `updatedAt` | `timestamptz` | no | `@UpdateDateColumn`, bumped on every status transition. |
 
@@ -213,14 +213,19 @@ Payoffs:
   through the injected factory, so they can be unit-tested against a fake that
   returns an in-memory CRUD service — no database required.
 
-### 🔒 SSRF protection (`libs/shared/src/utils/url-safety.ts`)
-A scraper that fetches arbitrary user-supplied URLs is a classic **SSRF** vector.
-Before any socket opens, `assertUrlIsSafe()`:
-- rejects non-`http(s)` schemes,
-- **resolves the hostname via DNS and rejects if *any* resolved address is
-  private/internal** — loopback, RFC-1918, link-local **`169.254.x` (cloud
-  metadata!)**, CGNAT `100.64/10`, IPv6 `::1`/`fe80`/`fc00::/7`, multicast. This
-  defends against DNS records that point at internal hosts (DNS-rebinding style).
+### 🔗 URL validation (`libs/shared/src/utils/url-safety.ts`)
+Before fetching, `assertUrlIsSafe()` validates that the target parses as a
+well-formed URL (via `new URL()`), throwing a permanent `UnsafeUrlError` when it
+doesn't — so a malformed URL fails immediately and is never retried (see retry
+semantics below). The HTTP DTO also enforces `@IsUrl({ protocols: ['http','https']
+})` at the API boundary.
+
+> **Note — not full SSRF protection.** This check does *not* block requests to
+> private/internal addresses. A production scraper that fetches arbitrary
+> user-supplied URLs should add SSRF defenses (resolve DNS and reject
+> loopback/RFC-1918/link-local `169.254.x` cloud-metadata ranges, plus
+> per-redirect revalidation). Called out in
+> [Production considerations](#production-considerations).
 
 ### 🔑 Proxy as intent, not a client-supplied URL
 The client sends only a boolean `useProxy`. The actual connection string
@@ -235,7 +240,7 @@ BullMQ retries a job when the processor **throws**, and marks it done when it
 **returns**. We exploit that:
 - transient failures (network, 5xx) **throw** → retried (`attempts: 3`,
   exponential backoff),
-- a **permanent** `UnsafeUrlError` (SSRF rejection) is recorded as `failed` and
+- a **permanent** `UnsafeUrlError` (invalid URL) is recorded as `failed` and
   then **returns** → no pointless retries of a request that can never succeed.
 
 ### 🧩 Domain errors that survive the TCP boundary (`libs/shared/src/filters/`)
@@ -262,8 +267,22 @@ returns `503` when it's unreachable — which is exactly what the k8s readiness/
 liveness probe consumes. (Not a hardcoded `{status:"ok"}`.)
 
 ### 🛡️ Fetch hardening (`scraper.service.ts`)
-30s timeout, **10 MB** content cap (`maxContentLength` / `maxBodyLength`), bounded
-redirects (5), and an honest, identifiable `User-Agent`.
+Request timeout (default **30s**, `REQUEST_TIMEOUT_MS`) and a content cap (default
+**10 MB**, `MAX_CONTENT_BYTES`, applied as `maxContentLength` / `maxBodyLength`) —
+both **env-tunable** with Zod defaults, so ops can adjust per environment without a
+rebuild. Plus bounded redirects (5) and an honest, identifiable `User-Agent`.
+
+### 🧩 Reusable dynamic modules (`libs/shared/src/{database,queue}/`)
+The infrastructure wiring is packaged as two parameterized dynamic modules so each
+service declares only what it touches at one call site:
+- **`TypeOrmConnectionModule.forRoot([Job])`** — opens the DB connection and
+  exposes the persistence factory.
+- **`BullConnectionModule.forRoot([SCRAPE_QUEUE])`** — opens the Redis/BullMQ
+  connection and registers + exports the named queues (so producers can
+  `@InjectQueue` and the worker can `@Processor`).
+
+Adding a queue or an entity is a one-line change at the importing module, not
+duplicated `forRootAsync` boilerplate per service.
 
 ### 📦 Dependency-isolated monorepo + multi-stage Docker
 Each service declares **only the dependencies it uses** (the API has no `typeorm`/
@@ -279,7 +298,7 @@ tooling or unused deps.
 |---|---|---|
 | `api` | Stateless HTTP REST gateway; forwards to Job Manager over TCP | 3000 |
 | `job-manager` | TCP microservice: validate, persist (PG), enqueue (BullMQ) | 3001 |
-| `scraper` | BullMQ worker: SSRF-guard, fetch URL (optional proxy), store HTML | — |
+| `scraper` | BullMQ worker: validate URL, fetch (optional proxy), store HTML | — |
 
 ---
 
