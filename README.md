@@ -19,7 +19,6 @@ a proxy), and return the resulting HTML.
 - [Design details worth noticing](#design-details-worth-noticing)
 - [Services](#services)
 - [Tech stack](#tech-stack)
-- [Monorepo layout](#monorepo-layout)
 - [Running locally](#running-locally)
 - [API reference](#api-reference)
 - [Proxy support](#proxy-support)
@@ -77,52 +76,25 @@ backbone of the design.
 
 ## Why these tools?
 
-Every dependency earns its place. The assignment allowed any architecture; here's
-the reasoning behind each choice.
+The assignment allowed any architecture; the reasoning behind each choice, briefly:
 
-### NestJS
-Mandated by the assignment, but a strong fit anyway: first-class **monorepo**
-support, a **DI container** that makes the shared library and per-service wiring
-clean, built-in **TCP microservice transport** (no extra broker for the sync hop),
-and decorator-based **validation pipes / exception filters** that let cross-cutting
-concerns live in one place instead of being copy-pasted into every handler.
-
-### PostgreSQL (via TypeORM)
-Jobs are **relational, structured records** with a clear lifecycle
-(`pending → processing → done/failed`) that we query by id and could index by
-status/time. A battle-tested ACID store is the safe default for "source of truth"
-data. TypeORM gives entity-as-code, migrations-ready schema, and `pg` connection
-pooling. (HTML is currently stored inline — see
-[Production considerations](#production-considerations) for when you'd offload it.)
-
-### Redis + BullMQ
-The job between Job Manager and Scraper needs a **durable, retryable queue**, not a
-fire-and-forget call. BullMQ (on Redis) gives us **at-least-once delivery**,
-**automatic retries with exponential backoff**, dead-letter semantics, and
-**horizontal scaling** of consumers for free. Redis is the de-facto backing store
-for it and is trivial to run locally and in k8s. We didn't reach for Kafka/RabbitMQ
-because the workload is a simple work-queue, not an event stream or complex routing.
-
-### Tinyproxy (local proxy for the bonus)
-The proxy feature needs *something* to prove the request actually egresses through
-a proxy. **Tinyproxy** is a tiny, zero-config forward proxy that ships as a Docker
-image, so reviewers can demo `useProxy: true` end-to-end **with no external
-account or credentials** — just `docker-compose up`. In production this slot is
-filled by a real commercial gateway (e.g. NetNut), supplied via a Secret.
-
-### axios + http/https-proxy-agent
-`axios` for the HTTP fetch (timeouts, redirect limits, content-length caps,
-`responseType` control). For proxying, the agent is chosen by the **target's
-scheme**: an `https://` target is `CONNECT`-tunnelled through the proxy via
-**`https-proxy-agent`**, while an `http://` target uses an absolute-URI request to
-the proxy via **`http-proxy-agent`**. Both are set on the request and axios selects
-the one matching the target, so plain-HTTP and HTTPS targets (and redirects across
-schemes) are both proxied correctly.
-
-### Zod (env validation)
-Config is validated at **boot** so a missing/garbage variable fails fast with a
-clear message, instead of surfacing as an `undefined` at the first request. Zod was
-chosen over Joi for its TypeScript-native inference and composable schemas.
+- **NestJS** (mandated) — first-class monorepo + DI, built-in **TCP microservice
+  transport** for the sync hop (no extra broker), and decorator-based validation
+  pipes / exception filters that keep cross-cutting concerns in one place.
+- **PostgreSQL + TypeORM** — an ACID store is the right default for source-of-truth
+  job records. (HTML is stored inline for now — see [Data model](#data-model) for
+  the S3 offload path.)
+- **Redis + BullMQ** — the Job-Manager→Scraper hop needs a **durable, retryable
+  queue**: at-least-once delivery, retries with exponential backoff, and horizontal
+  scaling of consumers for free. Overkill brokers (Kafka/RabbitMQ) aren't needed for
+  a simple work-queue.
+- **axios + http/https-proxy-agent** — fetch with timeouts/size caps; the proxy
+  agent is picked by **target scheme** (`https` → CONNECT tunnel, `http` →
+  absolute-URI request) so both are proxied correctly. See [Proxy support](#proxy-support).
+- **Tinyproxy** — a zero-config forward proxy Docker image so `useProxy: true` can
+  be demoed end-to-end with no external account. Production uses a real gateway via a Secret.
+- **Zod** — env validated at **boot** (fail-fast with a clear message), chosen over
+  Joi for TypeScript-native inference.
 
 ---
 
@@ -147,33 +119,18 @@ one row per submitted job, mutated in place as the job moves through its states.
 up) → `done` (HTML stored) **or** `failed` (`errorMessage` stored). The status
 column is what the client polls on.
 
-### Why `useProxy` is a boolean, not a URL — at the data layer
-The column stores **intent only**. The actual proxy connection string
-(`PROXY_URL`, which carries credentials) is **deployment config in a k8s Secret**
-and is deliberately **never persisted** on the row. This keeps secrets out of the
-database entirely: even with full read access to `scrape_jobs`, you cannot recover
-a proxy credential. The Scraper combines the row's `useProxy` flag with the
-runtime `PROXY_URL` at fetch time — the two are never co-located at rest. (Full
-rationale in [Proxy support](#proxy-support).)
+**`useProxy` stores intent, not a URL.** The proxy connection string lives in
+config (a k8s Secret) and is **never persisted** — so secrets stay out of the DB
+entirely. Full rationale in [Proxy support](#proxy-support).
 
 ### ⚠️ Storage note: HTML belongs in object storage (S3), not Postgres
-Here, fetched HTML is stored inline in the `html` `text` column — fine for the
-assignment and easy to demo. **In production my best practice is to offload the
-HTML body to object storage (S3 / GCS) and keep only a reference on the row**
-(e.g. an `htmlS3Key` / URL + size + content-hash), because:
-- **Row/table bloat** — a 10 MB page × many jobs turns the hot table into
-  multi-GB, slowing every scan, backup, and replication.
-- **Separation of concerns** — Postgres should hold *structured, queryable
-  metadata*; large immutable blobs are exactly what object storage is built for
-  (cheaper per GB, designed for large objects, independently lifecycle-managed).
-- **Performance** — `SELECT`s for status/listing no longer drag multi-MB `text`
-  columns across the wire; you fetch the blob only when actually needed.
-- **Lifecycle & cost** — S3 lifecycle rules can expire/transition old HTML to cold
-  storage without touching the DB.
-
-The schema is intentionally shaped so this is a drop-in change later: swap the
-`html` column for an `htmlS3Key` reference and have the Scraper `PutObject` before
-updating the row.
+HTML is stored inline in the `html` column — fine for the assignment, but **in
+production the best practice is to offload the body to S3/GCS and keep only a
+reference** (`htmlS3Key` + size + hash) on the row. Inline blobs bloat the hot
+table (slower scans/backups/replication), and large immutable objects are exactly
+what object storage is for (cheaper, lifecycle-managed). The schema is shaped so
+this is a drop-in change: swap `html` for `htmlS3Key` and have the Scraper
+`PutObject` before updating the row.
 
 ---
 
@@ -182,113 +139,56 @@ updating the row.
 These are the "small things" that make the solution production-minded rather than
 a happy-path demo.
 
-### 🧱 Persistence centralized in one generic service + factory (`libs/shared/src/repositories/`)
-The services don't sprinkle TypeORM calls around — all CRUD goes through a single
-generic service, parameterized by the collection it operates on. There's no
-hand-written repository per entity:
-- **`DbOperationsService<T>`** — one **generic CRUD service** (`create` /
-  `findById` / `update` / `find` / `delete` / `count`). It's constructed with the
-  collection (entity) it targets and is the **only place that touches TypeORM's
-  `Repository` API**.
-- **`DbOperationsFactoryService`** — an `@Injectable()` **factory**. A service
-  injects it once and asks for a CRUD service bound to whatever collection it
-  needs, in its constructor:
-  ```ts
-  constructor(private readonly dbFactory: DbOperationsFactoryService) {
-    this.jobDbOperation = this.dbFactory.getService<Job>(Job);
-  }
-  ```
-- **`TypeOrmConnectionModule.forRoot([Job])`** — opens the DB connection, loads the
-  entity metadata the service uses, and provides+exports the factory. A service
-  lists the collections it touches at this one call site.
+**🧱 Persistence behind a generic service + factory** (`libs/shared/src/repositories/`)
+— the services depend on an **abstraction**, not on TypeORM directly: all CRUD goes
+through one generic `DbOperationsService<T>` (the only file that touches TypeORM's
+`Repository` API), handed out by an injectable `DbOperationsFactoryService`. A
+service binds it to an entity in one line: `this.jobs =
+this.dbFactory.getService<Job>(Job)`. Because the data access sits behind that single
+seam, a datastore change is localized (write a sibling service + new connection) and
+services can be unit-tested against an in-memory fake — no DB.
 
-Payoffs:
-- **Localized datastore change** — moving off Postgres (e.g. to Mongo) means
-  writing a sibling operations-service against the same CRUD surface and pointing
-  the factory at a new connection. The change is **confined to this folder**, not
-  scattered across services. (Honest framing: it's a real adapter + connection to
-  write, not a config flip — the value is that persistence lives in one swappable
-  seam.)
-- **Testability** — `JobManagerService`/`ScraperProcessor` reach the DB only
-  through the injected factory, so they can be unit-tested against a fake that
-  returns an in-memory CRUD service — no database required.
+**🧩 Reusable dynamic modules** (`libs/shared/src/{database,queue}/`) — infra wiring
+is packaged as `TypeOrmConnectionModule.forRoot([Job])` (DB connection + persistence
+factory) and `BullConnectionModule.forRoot([SCRAPE_QUEUE])` (Redis/BullMQ + queue
+registration). Adding an entity or queue is one line at the importing module, not
+duplicated `forRootAsync` boilerplate.
 
-### 🔗 URL validation (`libs/shared/src/utils/url-safety.ts`)
-Before fetching, `assertUrlIsSafe()` validates that the target parses as a
-well-formed URL (via `new URL()`), throwing a permanent `UnsafeUrlError` when it
-doesn't — so a malformed URL fails immediately and is never retried (see retry
-semantics below). The HTTP DTO also enforces `@IsUrl({ protocols: ['http','https']
-})` at the API boundary.
+**🧩 Domain errors that survive the TCP boundary** (`libs/shared/src/filters/`) —
+NestJS microservices replace a thrown non-`RpcException` with a generic "Internal
+server error", dropping the class. `DomainRpcExceptionFilter` (JM side) re-emits a
+structured `{ code, message }`; `RpcHttpExceptionFilter` (API side) maps it back to
+HTTP (`NOT_FOUND` → 404, rxjs `TimeoutError` → 503). Services stay HTTP-agnostic;
+we match on `code` since `instanceof` doesn't survive the wire.
 
-> **Note — not full SSRF protection.** This check does *not* block requests to
-> private/internal addresses. A production scraper that fetches arbitrary
-> user-supplied URLs should add SSRF defenses (resolve DNS and reject
-> loopback/RFC-1918/link-local `169.254.x` cloud-metadata ranges, plus
-> per-redirect revalidation). Called out in
-> [Production considerations](#production-considerations).
+**♻️ Retry semantics tuned to failure type** (`scraper.processor.ts`) — BullMQ
+retries when the processor **throws**, completes when it **returns**. Transient
+failures throw → retried (`attempts: 3`, exponential backoff); a permanent
+`UnsafeUrlError` is recorded `failed` and returns → never retried.
 
-### 🔑 Proxy as intent, not a client-supplied URL
-The client sends only a boolean `useProxy`. The actual connection string
-(`PROXY_URL`, which carries credentials) is **operator config in a k8s Secret** —
-never accepted from the request, never persisted to the DB, never returned to the
-client, and **redacted in logs** (`redactProxy()`). If `useProxy: true` but no
-`PROXY_URL` is configured, the job **fails loudly** instead of silently doing a
-direct fetch that would leak the real egress IP.
+**🔗 URL validation** (`url-safety.ts`) — `assertUrlIsSafe()` rejects malformed URLs
+(permanent `UnsafeUrlError`); the DTO also enforces `@IsUrl({ protocols:
+['http','https'] })`. *Not full SSRF protection* — it doesn't block internal
+targets; see [Production considerations](#production-considerations).
 
-### ♻️ Retry semantics tuned to failure type (`scraper.processor.ts`)
-BullMQ retries a job when the processor **throws**, and marks it done when it
-**returns**. We exploit that:
-- transient failures (network, 5xx) **throw** → retried (`attempts: 3`,
-  exponential backoff),
-- a **permanent** `UnsafeUrlError` (invalid URL) is recorded as `failed` and
-  then **returns** → no pointless retries of a request that can never succeed.
+**🔑 Proxy as intent** — the client sends only a boolean; the credentialed
+`PROXY_URL` is operator config (Secret), never persisted/returned and redacted in
+logs. Details in [Proxy support](#proxy-support).
 
-### 🧩 Domain errors that survive the TCP boundary (`libs/shared/src/filters/`)
-NestJS microservices replace any non-`RpcException` thrown in a handler with a
-generic "Internal server error", **dropping the class and custom fields**. So:
-- **`DomainRpcExceptionFilter`** (Job Manager side) re-emits domain errors as a
-  structured `{ code, message }` payload onto the wire.
-- **`RpcHttpExceptionFilter`** (API side) decodes that back to the right HTTP
-  status — `code === 'NOT_FOUND'` → `404`, an rxjs `TimeoutError` → `503`.
+**✅ Strict input validation** — global `ValidationPipe` with `whitelist` +
+`forbidNonWhitelisted` rejects unknown body keys outright.
 
-Services and controllers stay **HTTP-agnostic**; the translation lives in two
-small filters registered via `APP_FILTER`. (`instanceof` is intentionally *not*
-used across the wire — the prototype is lost in transit; we match on `code`.)
+**❤️ Real health checks** (`health.controller.ts`) — `/health` uses
+`@nestjs/terminus` to actually ping the Job Manager over TCP (503 when unreachable),
+feeding the k8s probes — not a hardcoded `{status:"ok"}`.
 
-### ✅ Strict input validation (`validation-pipe.provider.ts`)
-A global `ValidationPipe` with `whitelist: true` + `forbidNonWhitelisted: true`
-strips/blocks unknown fields, and the DTO enforces `@IsUrl({ protocols:
-['http','https'], require_protocol: true })`. Unknown keys in the body are
-rejected, not silently ignored.
+**🛡️ Fetch hardening** (`scraper.service.ts`) — env-tunable request timeout
+(`REQUEST_TIMEOUT_MS`, default 30s) and content cap (`MAX_CONTENT_BYTES`, default
+10 MB), bounded redirects, identifiable `User-Agent`.
 
-### ❤️ Real health checks (`api/src/health.controller.ts`)
-`/health` uses `@nestjs/terminus` to **actually ping the Job Manager** over TCP and
-returns `503` when it's unreachable — which is exactly what the k8s readiness/
-liveness probe consumes. (Not a hardcoded `{status:"ok"}`.)
-
-### 🛡️ Fetch hardening (`scraper.service.ts`)
-Request timeout (default **30s**, `REQUEST_TIMEOUT_MS`) and a content cap (default
-**10 MB**, `MAX_CONTENT_BYTES`, applied as `maxContentLength` / `maxBodyLength`) —
-both **env-tunable** with Zod defaults, so ops can adjust per environment without a
-rebuild. Plus bounded redirects (5) and an honest, identifiable `User-Agent`.
-
-### 🧩 Reusable dynamic modules (`libs/shared/src/{database,queue}/`)
-The infrastructure wiring is packaged as two parameterized dynamic modules so each
-service declares only what it touches at one call site:
-- **`TypeOrmConnectionModule.forRoot([Job])`** — opens the DB connection and
-  exposes the persistence factory.
-- **`BullConnectionModule.forRoot([SCRAPE_QUEUE])`** — opens the Redis/BullMQ
-  connection and registers + exports the named queues (so producers can
-  `@InjectQueue` and the worker can `@Processor`).
-
-Adding a queue or an entity is a one-line change at the importing module, not
-duplicated `forRootAsync` boilerplate per service.
-
-### 📦 Dependency-isolated monorepo + multi-stage Docker
-Each service declares **only the dependencies it uses** (the API has no `typeorm`/
-`bull`/`axios`), and each `Dockerfile` is **multi-stage** — build the shared lib +
-that one app, then `npm prune --omit=dev` so the runtime image carries no build
-tooling or unused deps.
+**📦 Dependency-isolated monorepo + multi-stage Docker** — each service depends only
+on what it uses (the API has no `typeorm`/`bull`/`axios`); Dockerfiles are
+multi-stage with `npm prune --omit=dev` so runtime images carry no build tooling.
 
 ---
 
@@ -321,67 +221,40 @@ tooling or unused deps.
 
 ---
 
-## Monorepo layout
-
-An **npm workspaces** monorepo — each app and the shared lib is its own package
-with its **own `package.json` and dependency surface**:
-
-- `@netnut/shared` — built to `dist/`, consumed by the apps via the workspace
-  symlink. Holds the **DTOs, the `Job` entity, the generic `DbOperationsService` +
-  `DbOperationsFactoryService` (persistence), the `TypeOrmConnectionModule` and
-  `BullConnectionModule`, the `ScrapeJobData` queue type, the URL-validation util,
-  the two exception filters, the Zod env schemas and queue constants** — the single
-  source of truth shared across services.
-- `@netnut/api` — only HTTP / microservice-client / terminus deps (no `typeorm`,
-  `bull`, `pg`, `axios`).
-- `@netnut/job-manager` — `typeorm`, `@nestjs/bull`, `pg`, …
-- `@netnut/scraper` — `axios`, `http-proxy-agent`, `https-proxy-agent`, `typeorm`,
-  `@nestjs/bull`, …
-
-> **Build order matters:** `@netnut/shared` must be built before the apps. The root
-> `npm run build` script does this for you.
-
----
-
 ## Running locally
 
-### Prerequisites
-- Node.js 20+
-- Docker + Docker Compose
+**Prerequisites:** Node.js 20+, Docker + Docker Compose.
 
-### 1. Install dependencies
+### Quickest: the whole stack in Docker
 ```bash
-# Installs every workspace and links @netnut/shared into node_modules
-npm install
+docker-compose up --build      # API on http://localhost:3000
 ```
 
-### 2. Start infrastructure (PostgreSQL + Redis)
+### Manual (for development)
 ```bash
-docker-compose up postgres redis -d
+npm install                          # installs all workspaces, links @netnut/shared
+docker-compose up postgres redis -d  # Postgres :5432, Redis :6379
+npm run build:shared
+# then, in three terminals:
+npm run start:dev:job-manager
+npm run start:dev:scraper
+npm run start:dev:api
 ```
-This publishes Postgres on host port **5432** and Redis on **6379**.
 
-### 3. Env files
+**Env files** — each service has its own `.env` and loads only the vars it needs,
+all **validated at boot by Zod** (fail-fast). Required infra vars have no defaults;
+the scraper's `REQUEST_TIMEOUT_MS` / `MAX_CONTENT_BYTES` are optional (Zod defaults).
 
-Each service has its **own `.env`** and loads **only the variables it needs**.
-Every variable is **validated at boot by Zod**, so a missing/invalid value fails
-fast with a clear message. Required infra vars have **no code-side defaults**; the
-only exceptions are the scraper's optional tuning knobs (`REQUEST_TIMEOUT_MS`,
-`MAX_CONTENT_BYTES`), which have sensible Zod defaults so a deployment only sets
-them to override.
-
-`apps/api/.env`
-```
+```ini
+# apps/api/.env
 API_PORT=3000
 JOB_MANAGER_HOST=localhost
 JOB_MANAGER_PORT=3001
-```
 
-`apps/job-manager/.env`
-```
-JOB_MANAGER_PORT=3001
+# apps/job-manager/.env   (+ JOB_MANAGER_PORT=3001)
+# apps/scraper/.env        (+ PROXY_URL=, optional REQUEST_TIMEOUT_MS / MAX_CONTENT_BYTES)
 DB_HOST=localhost
-DB_PORT=5432
+DB_PORT=5432          # must match the published Postgres host port
 DB_USER=postgres
 DB_PASS=postgres
 DB_NAME=netnut
@@ -389,136 +262,50 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-`apps/scraper/.env`
-```
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASS=postgres
-DB_NAME=netnut
-REDIS_HOST=localhost
-REDIS_PORT=6379
-PROXY_URL=          # optional; set to http://localhost:8888 to use the Tinyproxy container
-REQUEST_TIMEOUT_MS=30000     # optional (default 30000)
-MAX_CONTENT_BYTES=10485760   # optional (default 10 MB)
-```
-
-> `DB_PORT` must match the host port Postgres is published on (`5432` with the
-> compose file above). In Docker/k8s these values come from the container
-> environment, which takes precedence over the `.env` file.
-
-### 4. Build the shared lib
-```bash
-npm run build:shared
-```
-
-### 5. Start the services (3 terminals)
-```bash
-npm run start:dev:job-manager   # Terminal 1
-npm run start:dev:scraper       # Terminal 2
-npm run start:dev:api           # Terminal 3
-```
-
-> Editing `libs/shared`? Rebuild it (`npm run build:shared`, or
-> `npm run build:watch -w @netnut/shared`) so the apps pick up the change.
-
-### Or: the whole stack with Docker Compose
-```bash
-docker-compose up --build
-```
+> In Docker/k8s these come from the container environment (which overrides `.env`).
+> Editing `libs/shared`? Rebuild it (`npm run build:shared`) so the apps pick it up.
 
 ---
 
 ## API reference
 
-### Submit a scrape job
-```http
-POST /scrape
-Content-Type: application/json
+**`POST /scrape`** → `201` with the created job. Body: `{ "url": "https://example.com",
+"useProxy": true }` (`useProxy` optional, defaults `false`; it's a boolean *intent*
+flag — the client never supplies a proxy URL).
 
-{
-  "url": "https://example.com",
-  "useProxy": true        // optional, defaults to false
-}
-```
+**`GET /scrape/:id`** → `200` with the job row. Unknown id → `404`; Job Manager
+unreachable → `503`.
 
-> `useProxy` is a boolean **intent** flag. The client never supplies a proxy
-> connection string — see [Proxy support](#proxy-support).
-
-**Response** `201 Created`:
+The job object returned by both:
 ```json
 {
-  "id": "uuid",
-  "url": "https://example.com",
-  "useProxy": true,
-  "status": "pending",
-  "html": null,
-  "errorMessage": null,
-  "createdAt": "...",
-  "updatedAt": "..."
+  "id": "uuid", "url": "https://example.com", "useProxy": true,
+  "status": "pending",          // → processing → done / failed
+  "html": null,                  // populated when status = done
+  "errorMessage": null,          // populated when status = failed
+  "createdAt": "...", "updatedAt": "..."
 }
 ```
 
-### Poll for the result
-```http
-GET /scrape/:id
-```
-**Response** `200 OK` (when done):
-```json
-{
-  "id": "uuid",
-  "url": "https://example.com",
-  "useProxy": true,
-  "status": "done",
-  "html": "<!DOCTYPE html>...",
-  "errorMessage": null,
-  "createdAt": "...",
-  "updatedAt": "..."
-}
-```
-Unknown id → `404 Not Found`. Job Manager unreachable → `503 Service Unavailable`.
-
-**Job lifecycle:** `pending` → `processing` → `done` / `failed`
-
-### Health
-```http
-GET /health      # 200 when the API can reach the Job Manager, else 503
-```
+**`GET /health`** → `200` when the API can reach the Job Manager (via terminus), else `503`.
 
 ---
 
 ## Proxy support
 
-The proxy feature is a **boolean toggle**, not a client-supplied URL. A request
-opts in with `"useProxy": true`. The client only expresses *intent*; the actual
-connection string lives in operator config — the `PROXY_URL` environment variable
-(a k8s **Secret** in production, since real proxy URLs carry credentials). The
-Scraper reads `PROXY_URL` and routes the request through it, selecting the proxy
-agent by target scheme — `https-proxy-agent` (CONNECT tunnel) for `https://`
-targets, `http-proxy-agent` (absolute-URI request) for `http://` targets.
+A request opts in with `"useProxy": true`; the Scraper routes the fetch through the
+operator-configured `PROXY_URL` (`http://[user:pass@]host:port`), choosing the agent
+by target scheme — `https-proxy-agent` (CONNECT tunnel) for `https://`,
+`http-proxy-agent` (absolute-URI) for `http://`. If `useProxy: true` but no
+`PROXY_URL` is set, the job **fails loudly** rather than silently leaking the real
+egress IP. (Why it's a boolean and not a client-supplied URL: see
+[Proxy as intent](#design-details-worth-noticing).)
 
-**Why intent, not a client URL?**
-- The proxy endpoint and its credentials are **deployment config, not request
-  data** — they belong in a Secret, never in the request body or the DB.
-- Credentials never reach the client, never get persisted, never leak in logs
-  (the URL is **redacted** when logged).
-- The operator controls *which* proxy; the client controls only *whether* to use one.
-
-**`PROXY_URL` format:** `http://[user:pass@]host:port`
-- Production example: `http://USER:PASS@gw.netnut.io:5959`
-- If `useProxy: true` but `PROXY_URL` is empty → the job **fails loudly** rather
-  than silently doing a direct fetch (which would leak the real egress IP).
-
-### Trying it locally
-`docker-compose` ships a [Tinyproxy](https://tinyproxy.github.io/) container, wired
-to the scraper via `PROXY_URL=http://proxy:8888`. Bring the stack up, submit a job
-with `"useProxy": true`, and watch the request flow through the proxy:
-```bash
-docker-compose up --build
-docker-compose logs -f proxy
-```
-Running the scraper outside Docker? Set `PROXY_URL=http://localhost:8888` in
-`apps/scraper/.env`.
+**Try it locally:** `docker-compose` ships a
+[Tinyproxy](https://tinyproxy.github.io/) container wired via
+`PROXY_URL=http://proxy:8888`. Bring the stack up, submit a `"useProxy": true` job,
+and watch `docker-compose logs -f proxy`. (Outside Docker, set
+`PROXY_URL=http://localhost:8888` in `apps/scraper/.env`.)
 
 ---
 
@@ -540,23 +327,12 @@ kubectl apply -f k8s/scraper.yaml       # Deployment, 2 replicas
 kubectl apply -f k8s/api.yaml           # Deployment + LoadBalancer, httpGet /health probes
 ```
 
-Notable choices:
-- **Config vs Secret split** — non-sensitive config in a `ConfigMap`, DB
-  credentials and `PROXY_URL` in a `Secret`. Apps consume both via `envFrom`.
-- **Postgres as a StatefulSet** with a PVC (stable identity + persistent storage);
-  **Redis/API/Scraper as Deployments**.
-- **Probes that mean something** — API has an HTTP `/health` readiness+liveness
-  probe (which transitively checks the Job Manager); Job Manager has a `tcpSocket`
-  probe on 3001.
-- **Scraper scales horizontally** — 2 replicas by default, since BullMQ hands each
-  job to exactly one worker:
-  ```bash
-  kubectl scale deployment scraper --replicas=5 -n netnut
-  ```
-
-> Validated locally with **k3s** (rancher/k3s in Docker): `kubectl apply
-> --dry-run=server` passes, and a full apply brings all pods to `Running` after
-> importing the locally-built images.
+Notable choices: **ConfigMap/Secret split** (creds + `PROXY_URL` in the Secret,
+consumed via `envFrom`); **Postgres as a StatefulSet** with a PVC, others as
+Deployments; **meaningful probes** (API `/health` readiness+liveness which
+transitively checks the JM; JM `tcpSocket` on 3001); **horizontal scaling** of the
+scraper (`kubectl scale deployment scraper --replicas=5 -n netnut`, since BullMQ
+gives each job to one worker).
 
 ---
 
