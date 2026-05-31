@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -27,10 +25,17 @@ services:
       timeout: 5s
       retries: 10
 
+  proxy:
+    image: monokal/tinyproxy:latest
+    command: ANY
+    ports:
+      - '8888:8888'
+
   job-manager:
     build:
       context: .
       dockerfile: apps/job-manager/Dockerfile
+    restart: unless-stopped
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -40,26 +45,17 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JOB_MANAGER_PORT: 3001
-    ports:
-      - '3001:3001'
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
-  # Lightweight forward proxy for demonstrating the useProxy feature end-to-end.
-  # Jobs submitted with { "useProxy": true } are routed through this container.
-  proxy:
-    image: monokal/tinyproxy:latest
-    command: ANY
-    ports:
-      - '8888:8888'
-
   scraper:
     build:
       context: .
       dockerfile: apps/scraper/Dockerfile
+    restart: unless-stopped
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -68,20 +64,20 @@ services:
       DB_NAME: netnut
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # Points at the Tinyproxy container above (compose service DNS name).
       PROXY_URL: http://proxy:8888
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      job-manager:
+      proxy:
         condition: service_started
 
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
     environment:
       API_PORT: 3000
       JOB_MANAGER_HOST: job-manager
