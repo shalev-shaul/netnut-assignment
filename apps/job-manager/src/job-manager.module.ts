@@ -2,7 +2,16 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
-import { DomainRpcExceptionFilter, Job, TypeOrmConnectionModule, validationPipeProvider } from '@netnut/shared';
+import {
+  createEnvValidator,
+  databaseEnvSchema,
+  DomainRpcExceptionFilter,
+  Job,
+  portSchema,
+  redisEnvSchema,
+  TypeOrmConnectionModule,
+  validationPipeProvider,
+} from '@netnut/shared';
 import { JobManagerController } from './job-manager.controller';
 import { JobManagerService } from './job-manager.service';
 
@@ -11,6 +20,11 @@ import { JobManagerService } from './job-manager.service';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate: createEnvValidator({
+        JOB_MANAGER_PORT: portSchema,
+        ...databaseEnvSchema,
+        ...redisEnvSchema,
+      }),
     }),
     TypeOrmConnectionModule.forRoot([Job]),
     BullModule.forRootAsync({

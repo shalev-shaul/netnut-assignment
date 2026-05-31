@@ -1,6 +1,7 @@
 export * from './dto/scrape-job.dto';
 export * from './entities/job.entity';
 export * from './config/typeorm.config';
+export * from './config/env-validation';
 export * from './constants/queue.constants';
 export * from './database/typeorm-connection.module';
 export * from './enums/job-manager-pattern.enum';

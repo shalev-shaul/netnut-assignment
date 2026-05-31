@@ -2,7 +2,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { ClientsModule, Transport } from '@nestjs/microservices';
-import { RpcHttpExceptionFilter, validationPipeProvider } from '@netnut/shared';
+import { TerminusModule } from '@nestjs/terminus';
+import { z } from 'zod';
+import {
+  createEnvValidator,
+  portSchema,
+  RpcHttpExceptionFilter,
+  validationPipeProvider,
+} from '@netnut/shared';
 import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
 import { HealthController } from './health.controller';
@@ -12,7 +19,13 @@ import { HealthController } from './health.controller';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate: createEnvValidator({
+        API_PORT: portSchema,
+        JOB_MANAGER_HOST: z.string(),
+        JOB_MANAGER_PORT: portSchema,
+      }),
     }),
+    TerminusModule,
     ClientsModule.registerAsync([
       {
         name: 'JOB_MANAGER',

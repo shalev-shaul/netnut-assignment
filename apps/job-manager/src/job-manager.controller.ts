@@ -1,6 +1,6 @@
-import { Controller, NotFoundException } from '@nestjs/common';
+import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { CreateScrapeJobDto, JobManagerPattern, NotFoundError } from '@netnut/shared';
+import { CreateScrapeJobDto, JobManagerPattern } from '@netnut/shared';
 import { JobManagerService } from './job-manager.service';
 
 @Controller()
@@ -14,13 +14,6 @@ export class JobManagerController {
 
   @MessagePattern(JobManagerPattern.GET_JOB)
   getJob(@Payload() id: string) {
-    try{
-      return this.service.getJob(id);
-    }catch(err){
-      if(err instanceof NotFoundError){
-        throw new NotFoundException(err)
-      }
-      return err
-    }
+    return this.service.getJob(id);
   }
 }
