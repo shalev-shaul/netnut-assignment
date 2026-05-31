@@ -1,14 +1,15 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
-import { BullModule } from '@nestjs/bull';
 import {
+  BullConnectionModule,
   createEnvValidator,
   databaseEnvSchema,
   DomainRpcExceptionFilter,
   Job,
   portSchema,
   redisEnvSchema,
+  SCRAPE_QUEUE,
   TypeOrmConnectionModule,
   validationPipeProvider,
 } from '@netnut/shared';
@@ -27,16 +28,7 @@ import { JobManagerService } from './job-manager.service';
       }),
     }),
     TypeOrmConnectionModule.forRoot([Job]),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        redis: {
-          host: config.get('REDIS_HOST'),
-          port: config.get<number>('REDIS_PORT'),
-        },
-      }),
-    }),
-    BullModule.registerQueue({ name: 'scrape' }),
+    BullConnectionModule.forRoot([SCRAPE_QUEUE]),
   ],
   controllers: [JobManagerController],
   providers: [

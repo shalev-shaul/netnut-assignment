@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
+import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { assertUrlIsSafe, redactProxy } from '@netnut/shared';
 
@@ -39,7 +40,7 @@ export class ScraperService {
       }`,
     );
 
-    const config: any = {
+    const config: AxiosRequestConfig = {
       timeout: REQUEST_TIMEOUT_MS,
       maxContentLength: MAX_CONTENT_BYTES,
       maxBodyLength: MAX_CONTENT_BYTES,
@@ -53,8 +54,13 @@ export class ScraperService {
     };
 
     if (proxyUrl) {
+      // Pick the agent by TARGET scheme, not proxy scheme: https targets are
+      // CONNECT-tunnelled (HttpsProxyAgent), http targets use absolute-URI
+      // requests to the proxy (HttpProxyAgent). axios then selects the agent
+      // matching the target's protocol. Setting both keeps redirects across
+      // schemes correct. `proxy: false` disables axios's own proxy handling.
       config.httpsAgent = new HttpsProxyAgent(proxyUrl);
-      config.httpAgent = new HttpsProxyAgent(proxyUrl);
+      config.httpAgent = new HttpProxyAgent(proxyUrl);
       config.proxy = false;
     }
 

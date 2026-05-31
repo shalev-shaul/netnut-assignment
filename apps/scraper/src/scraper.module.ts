@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bull';
+import { ConfigModule } from '@nestjs/config';
 import { z } from 'zod';
 import {
+  BullConnectionModule,
   createEnvValidator,
   databaseEnvSchema,
   Job,
   redisEnvSchema,
+  SCRAPE_QUEUE,
   TypeOrmConnectionModule,
 } from '@netnut/shared';
 import { ScraperProcessor } from './scraper.processor';
@@ -20,22 +21,11 @@ import { ScraperService } from './scraper.service';
       validate: createEnvValidator({
         ...databaseEnvSchema,
         ...redisEnvSchema,
-        // Operator-supplied proxy connection string; optional, but if present it
-        // must be a valid URL. Empty string = "no proxy configured".
         PROXY_URL: z.string().url().optional(),
       }),
     }),
     TypeOrmConnectionModule.forRoot([Job]),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        redis: {
-          host: config.get('REDIS_HOST'),
-          port: config.get('REDIS_PORT'),
-        },
-      }),
-    }),
-    BullModule.registerQueue({ name: 'scrape' }),
+    BullConnectionModule.forRoot([SCRAPE_QUEUE]),
   ],
   providers: [ScraperProcessor, ScraperService],
 })

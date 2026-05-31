@@ -6,22 +6,15 @@ import {
   DbOperationsService,
   Job,
   JobStatus,
-  SCRAPE_JOB_PROCESS,
+  ScrapeJobData,
   SCRAPE_QUEUE,
   UnsafeUrlError,
 } from '@netnut/shared';
 import { ScraperService } from './scraper.service';
 
-interface ScrapeJobData {
-  jobId: string;
-  url: string;
-  useProxy?: boolean;
-}
-
 @Processor(SCRAPE_QUEUE)
 export class ScraperProcessor {
   private readonly logger = new Logger(ScraperProcessor.name);
-
   private readonly jobRepo: DbOperationsService<Job>;
 
   constructor(
@@ -31,7 +24,7 @@ export class ScraperProcessor {
     this.jobRepo = this.dbFactory.getService<Job>(Job);
   }
 
-  @Process(SCRAPE_JOB_PROCESS)
+  @Process()
   async handleScrape(bullJob: BullJob<ScrapeJobData>) {
     const { jobId, url, useProxy } = bullJob.data;
     this.logger.log(`Processing job ${jobId}: ${url}`);
