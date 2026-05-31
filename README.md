@@ -328,9 +328,10 @@ with its **own `package.json` and dependency surface**:
 
 - `@netnut/shared` — built to `dist/`, consumed by the apps via the workspace
   symlink. Holds the **DTOs, the `Job` entity, the generic `DbOperationsService` +
-  `DbOperationsFactoryService` (persistence), the `TypeOrmConnectionModule`, the
-  SSRF utils, the two exception filters, the Zod env schemas, queue constants and
-  the TypeORM config** — the single source of truth shared across services.
+  `DbOperationsFactoryService` (persistence), the `TypeOrmConnectionModule` and
+  `BullConnectionModule`, the `ScrapeJobData` queue type, the URL-validation util,
+  the two exception filters, the Zod env schemas and queue constants** — the single
+  source of truth shared across services.
 - `@netnut/api` — only HTTP / microservice-client / terminus deps (no `typeorm`,
   `bull`, `pg`, `axios`).
 - `@netnut/job-manager` — `typeorm`, `@nestjs/bull`, `pg`, …
@@ -363,8 +364,11 @@ This publishes Postgres on host port **5432** and Redis on **6379**.
 ### 3. Env files
 
 Each service has its **own `.env`** and loads **only the variables it needs**.
-There are **no code-side defaults** — every variable is **validated at boot by
-Zod**, so a missing/invalid value fails fast with a clear message.
+Every variable is **validated at boot by Zod**, so a missing/invalid value fails
+fast with a clear message. Required infra vars have **no code-side defaults**; the
+only exceptions are the scraper's optional tuning knobs (`REQUEST_TIMEOUT_MS`,
+`MAX_CONTENT_BYTES`), which have sensible Zod defaults so a deployment only sets
+them to override.
 
 `apps/api/.env`
 ```
@@ -395,6 +399,8 @@ DB_NAME=netnut
 REDIS_HOST=localhost
 REDIS_PORT=6379
 PROXY_URL=          # optional; set to http://localhost:8888 to use the Tinyproxy container
+REQUEST_TIMEOUT_MS=30000     # optional (default 30000)
+MAX_CONTENT_BYTES=10485760   # optional (default 10 MB)
 ```
 
 > `DB_PORT` must match the host port Postgres is published on (`5432` with the
@@ -565,18 +571,19 @@ design leaves room for each:
   rationale and the drop-in migration path.
 - **`synchronize: true`** is convenient for the demo but unsafe in production —
   swap for **TypeORM migrations**.
-- **SSRF — per-redirect revalidation.** `assertUrlIsSafe` validates the *initial*
-  URL, but axios follows redirects automatically (`maxRedirects: 5`), so a public
-  URL that 3xx-redirects to an internal address (e.g. `169.254.169.254`) would be
-  fetched unchecked — a TOCTOU gap. Hardening: set `maxRedirects: 0` and follow
-  redirects manually, re-running `assertUrlIsSafe` on each `Location` hop.
+- **SSRF protection.** The current URL check only validates that the target is a
+  well-formed URL — it does **not** block internal targets. A production scraper
+  should resolve the host and reject private/internal ranges (loopback, RFC-1918,
+  link-local `169.254.x` cloud-metadata, CGNAT), reject non-`http(s)` schemes, and
+  revalidate on each redirect hop (`maxRedirects: 0` + manual follow) to close the
+  redirect-based TOCTOU gap.
 - **Indexes** on `status` / `createdAt` once you query by them.
 - **Observability** — structured (JSON) logging + a **correlation id** propagated
   API → Job Manager → Scraper so one request is traceable end-to-end; Prometheus
   metrics (queue depth, fetch latency).
 - **Rate limiting / quotas** on `POST /scrape` to bound queue growth.
-- **Tests** — unit tests for the SSRF guard and the fetch/queue paths, plus an e2e
-  happy-path. (Highest-value next addition.)
+- **Tests** — unit tests for the fetch/queue paths and the persistence factory,
+  plus an e2e happy-path. (Highest-value next addition.)
 
 ---
 
@@ -596,10 +603,12 @@ netnut-assignment/
 │       └── src/
 │           ├── dto/scrape-job.dto.ts
 │           ├── entities/job.entity.ts
-│           ├── enums/job-manager-pattern.enum.ts
+│           ├── enums/job.enum.ts
+│           ├── types.ts                       # ScrapeJobData (queue payload contract)
 │           ├── constants/queue.constants.ts
-│           ├── config/{typeorm.config,env-validation}.ts
-│           ├── database/typeorm-connection.module.ts  # opens connection + provides the factory
+│           ├── config/env-validation.ts       # Zod schemas (TypeORM config is inlined in the connection module)
+│           ├── database/typeorm-connection.module.ts  # opens DB connection + provides the factory
+│           ├── queue/bull-connection.module.ts        # opens Redis/BullMQ + registers queues
 │           ├── repositories/                 # generic persistence (one service + factory)
 │           │   ├── db-operations.service.ts         # DbOperationsService<T> (generic CRUD, the only TypeORM-aware file)
 │           │   └── db-operations-factory.service.ts # DbOperationsFactoryService.getService<T>(collection)
