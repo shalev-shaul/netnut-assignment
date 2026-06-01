@@ -22,4 +22,4 @@ type: Opaque
 stringData:
   DB_USER: postgres
   DB_PASS: postgres
-  PROXY_URL: ""
+  PROXY_URL: "http://proxy:8888"

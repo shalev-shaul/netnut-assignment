@@ -54,7 +54,7 @@ The diagram lives in **`architecture.drawio`** (open at
                                           │   Scraper    │ ◄─────────┘ consume
                                           │  (2 workers) │
                                           │ • URL check  │
-                                          │ • axios.get  │ ──► (optional proxy) ──► target
+                                          │ • fetch URL  │ ──► (optional proxy) ──► target
                                           │ • store HTML │ ─────► PostgreSQL
                                           └──────────────┘
 ```
@@ -69,8 +69,9 @@ shape of the interaction:
 | **① API → Job Manager** | **Sync RPC** over NestJS **TCP microservice** | The client is waiting on the HTTP request; it needs an immediate answer ("job accepted, here's the id" / "not found"). A request/response transport models that correctly, with a 5s timeout so a stuck Job Manager surfaces as `503` rather than a hung connection. |
 | **② Job Manager → Scraper** | **Async** **BullMQ** queue over Redis | Scraping is slow and unbounded (network I/O, large pages). Decoupling it behind a durable queue means the API stays responsive, work survives restarts, and we scale throughput simply by adding Scraper replicas. |
 
-This split — **sync where a human waits, async where work is slow** — is the
-backbone of the design.
+The guiding principle: **the transport follows the interaction** — request/response
+where a caller is waiting on the result, a durable queue where the work is slow and
+must survive failure.
 
 ---
 
@@ -78,9 +79,11 @@ backbone of the design.
 
 The assignment allowed any architecture; the reasoning behind each choice, briefly:
 
-- **NestJS** (mandated) — first-class monorepo + DI, built-in **TCP microservice
-  transport** for the sync hop (no extra broker), and decorator-based validation
-  pipes / exception filters that keep cross-cutting concerns in one place.
+- **NestJS** (mandated) — its **opinionated, modular structure** (modules + DI)
+  keeps the three services and the shared library cleanly organized and wired with
+  the same conventions; plus first-class monorepo support, a built-in **TCP
+  microservice transport** for the sync hop (no extra broker), and decorator-based
+  validation pipes / exception filters that keep cross-cutting concerns in one place.
 - **PostgreSQL + TypeORM** — an ACID store is the right default for source-of-truth
   job records. (HTML is stored inline for now — see [Data model](#data-model) for
   the S3 offload path.)
@@ -88,9 +91,9 @@ The assignment allowed any architecture; the reasoning behind each choice, brief
   queue**: at-least-once delivery, retries with exponential backoff, and horizontal
   scaling of consumers for free. Overkill brokers (Kafka/RabbitMQ) aren't needed for
   a simple work-queue.
-- **axios + http/https-proxy-agent** — fetch with timeouts/size caps; the proxy
-  agent is picked by **target scheme** (`https` → CONNECT tunnel, `http` →
-  absolute-URI request) so both are proxied correctly. See [Proxy support](#proxy-support).
+- **http/https-proxy-agent** — the proxy agent is picked by **target scheme**
+  (`https` → CONNECT tunnel, `http` → absolute-URI request) so both are proxied
+  correctly. See [Proxy support](#proxy-support).
 - **Tinyproxy** — a zero-config forward proxy Docker image so `useProxy: true` can
   be demoed end-to-end with no external account. Production uses a real gateway via a Secret.
 - **Zod** — env validated at **boot** (fail-fast with a clear message), chosen over
@@ -187,7 +190,7 @@ feeding the k8s probes — not a hardcoded `{status:"ok"}`.
 10 MB), bounded redirects, identifiable `User-Agent`.
 
 **📦 Dependency-isolated monorepo + multi-stage Docker** — each service depends only
-on what it uses (the API has no `typeorm`/`bull`/`axios`); Dockerfiles are
+on what it uses (the API has no `typeorm`/`bull`); Dockerfiles are
 multi-stage with `npm prune --omit=dev` so runtime images carry no build tooling.
 
 ---
@@ -210,7 +213,6 @@ multi-stage with `npm prune --omit=dev` so runtime images carry no build tooling
 | Sync inter-service | NestJS **TCP microservice** (request/response) |
 | Async work queue | **BullMQ** + `@nestjs/bull` on **Redis 7** |
 | Persistence | **PostgreSQL 16** via **TypeORM** + `pg` |
-| HTTP fetching | `axios` |
 | Proxy | `http-proxy-agent` + `https-proxy-agent` (agent picked by target scheme; **Tinyproxy** for local demo) |
 | Request validation | `class-validator` + `class-transformer` (global `ValidationPipe`) |
 | Env validation | **Zod** (`ConfigModule` `validate`, fail-fast at boot) |
@@ -322,6 +324,7 @@ kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/configmap.yaml     # ConfigMap (non-secret) + Secret (DB creds, PROXY_URL)
 kubectl apply -f k8s/postgres.yaml      # StatefulSet + headless Service + PVC
 kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/proxy.yaml         # Deployment + Service (demo Tinyproxy)
 kubectl apply -f k8s/job-manager.yaml   # Deployment + Service, tcpSocket readiness probe
 kubectl apply -f k8s/scraper.yaml       # Deployment, 2 replicas
 kubectl apply -f k8s/api.yaml           # Deployment + LoadBalancer, httpGet /health probes
