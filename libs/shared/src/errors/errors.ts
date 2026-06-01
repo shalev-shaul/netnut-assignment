@@ -22,3 +22,10 @@ export class UnsafeUrlError extends Error {
     this.name = 'UnsafeUrlError';
   }
 }
+
+export class ScrapeFailedError extends Error {
+  constructor(url: string) {
+    super(`Failed to scrape url: ${url}`);
+    this.name = 'ScrapeFailedError';
+  }
+}

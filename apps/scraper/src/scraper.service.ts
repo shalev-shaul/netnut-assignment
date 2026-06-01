@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosRequestConfig } from 'axios';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { assertUrlIsSafe } from '@netnut/shared';
+import {assertUrlIsSafe,ScrapeFailedError} from '@netnut/shared';
 
 @Injectable()
 export class ScraperService {
@@ -49,7 +49,11 @@ export class ScraperService {
       config.proxy = false;
     }
 
-    const response = await axios.get(url, config);
-    return response.data as string;
+    try {
+      const response = await axios.get(url, config);
+      return response.data as string;
+    } catch {
+      throw new ScrapeFailedError(url);
+    }
   }
 }
